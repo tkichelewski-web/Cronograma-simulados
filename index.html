@@ -181,6 +181,7 @@ main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
     </div>
     <div class="filtros">
       <div><label for="f-safra">Safra</label><select id="f-safra"></select></div>
+      <div><label for="f-unid">Unidade</label><select id="f-unid"></select></div>
       <div><label for="f-area">Área</label><select id="f-area"></select></div>
     </div>
   </div>
@@ -302,10 +303,13 @@ async function init() {
   $('f-safra').innerHTML = safras.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('');
   $('f-area').innerHTML = '<option value="">Todas</option>' + [...AREAS, 'Unidade inteira'].map(a => `<option>${a}</option>`).join('');
   if (lsGet('sim-area') !== null) $('f-area').value = lsGet('sim-area');
+  $('f-unid').innerHTML = '<option value="">Todas</option>' + unidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
+  if (lsGet('sim-unid') && unidades.some(u => String(u.id) === lsGet('sim-unid'))) $('f-unid').value = lsGet('sim-unid');
   $('mapa-filtro').innerHTML = '<option value="">Todas as unidades</option>' + unidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
 
   $('f-safra').onchange = () => { mesSel = null; carregarTudo(); };
   $('f-area').onchange = () => { lsSet('sim-area', $('f-area').value); renderRegua(); renderVisao(); };
+  $('f-unid').onchange = () => { lsSet('sim-unid', $('f-unid').value); renderRegua(); renderVisao(); };
   document.querySelectorAll('.aba').forEach(b => b.onclick = () => {
     document.querySelectorAll('.aba').forEach(x => x.classList.toggle('ativa', x === b));
     $('aba-crono').classList.toggle('hidden', b.dataset.aba !== 'crono');
@@ -356,7 +360,9 @@ const normTxt = t => String(t ?? '').trim().toUpperCase().normalize('NFD').repla
 const nomeUni = id => unidades.find(u => u.id === id)?.nome || '?';
 const grupoArea = s => (s.areas || []).includes('Unidade inteira') || (s.areas || []).length > 1 ? 'Unidade inteira' : ((s.areas || [])[0] || 'Sem área');
 
+const unidadeFiltro = () => Number($('f-unid').value) || null;
 function passaFiltro(s) {
+  if (unidadeFiltro() && s.unidade_id !== unidadeFiltro()) return false;
   const f = $('f-area').value;
   if (!f) return true;
   const g = grupoArea(s);
@@ -404,7 +410,7 @@ function renderVisao() {
   $('safra').classList.toggle('hidden', visao !== 'safra');
   if (visao === 'mes') renderLista(); else renderSafra();
 }
-const sufixoArea = () => $('f-area').value ? ` — ${$('f-area').value}` : '';
+const sufixoArea = () => (unidadeFiltro() ? ` — ${nomeUni(unidadeFiltro())}` : '') + ($('f-area').value ? ` — ${$('f-area').value}` : '');
 const ROTULO = { Planejado: 'P', Agendado: 'A', Reprogramado: 'Rp', Realizado: 'R', Cancelado: 'C' };
 
 // Visão da safra toda, no formato do cronograma anual
@@ -420,7 +426,7 @@ function renderSafra() {
     ? `${real} de ${vis.length} realizados na safra · até o mês atual: ${realAteHoje} de ${ateHoje.length} (${ateHoje.length ? Math.round(realAteHoje / ateHoje.length * 100) : 100}%)`
     : '';
   if (!vis.length) {
-    $('safra').innerHTML = `<div class="vazio">${simulados.length ? 'Nenhum simulado nesta área.' : 'Nenhum cenário cadastrado nesta safra.'}<br><button class="btn btn-primario" style="margin-top:12px" onclick="abrirCenario()">Novo cenário</button></div>`;
+    $('safra').innerHTML = `<div class="vazio">${simulados.length ? 'Nenhum simulado com esses filtros.' : 'Nenhum cenário cadastrado nesta safra.'}<br><button class="btn btn-primario" style="margin-top:12px" onclick="abrirCenario()">Novo cenário</button></div>`;
     return;
   }
   const ordemGrupo = [...AREAS, 'Unidade inteira', 'Sem área'];
@@ -474,7 +480,7 @@ function renderLista() {
   $('titulo-mes').textContent = `${nomeMesLongo(mesSel)}${sufixoArea()}`;
   $('resumo-mes').textContent = doMes.length ? `${real} de ${doMes.length} realizado(s) dentro do mês` : '';
   if (!doMes.length) {
-    $('lista').innerHTML = `<div class="vazio">Nenhum simulado planejado para ${nomeMesLongo(mesSel).toLowerCase()}${$('f-area').value ? ' nesta área' : ''}.<br>
+    $('lista').innerHTML = `<div class="vazio">Nenhum simulado planejado para ${nomeMesLongo(mesSel).toLowerCase()}${$('f-area').value || unidadeFiltro() ? ' com esses filtros' : ''}.<br>
       <button class="btn btn-primario" style="margin-top:12px" onclick="abrirCenario()">Novo cenário</button></div>`;
     return;
   }
@@ -569,7 +575,7 @@ function abrirCenario(chave) {
         ${travaMes ? '<span style="font-size:12px;color:var(--muted)">O mês já começou, então não pode mais ser trocado.</span>' : ''}</div>
     </div>
     <div class="campo"><span class="rot">Unidades</span>
-      <div class="areas">${unidades.map(u => `<label><input type="checkbox" class="chk-uni" value="${u.id}" ${!base || uniExist.includes(u.id) ? 'checked' : ''} ${uniExist.includes(u.id) ? 'disabled' : ''}><span>${esc(u.nome)}</span></label>`).join('')}</div>
+      <div class="areas">${unidades.map(u => `<label><input type="checkbox" class="chk-uni" value="${u.id}" ${(!base && (!unidadeFiltro() || unidadeFiltro() === u.id)) || uniExist.includes(u.id) ? 'checked' : ''} ${uniExist.includes(u.id) ? 'disabled' : ''}><span>${esc(u.nome)}</span></label>`).join('')}</div>
       ${base ? '<span style="font-size:12px;color:var(--muted)">Para tirar uma unidade, use Cancelar ou Excluir na linha dela.</span>' : ''}</div>
     <div class="campo"><span class="rot">Área do cenário</span>
       <div class="areas">${AREAS.map(a => `<label><input type="checkbox" class="chk-area" value="${a}" ${areas.includes(a) ? 'checked' : ''}><span>${a}</span></label>`).join('')}
@@ -846,11 +852,11 @@ function exportarAnual() {
     x.status, fmtData(x.data_agendada), fmtData(x.data_realizada), x.evidencia_url || '',
     ...meses.map(m => m.ym === x.mes_planejado ? (contaNoIP(x) ? 'R' : 'P') : '')
   ]);
-  const ws = XLSX.utils.aoa_to_sheet([[`Cronograma Anual de Simulados — Safra ${s.nome}${area ? ' — ' + area : ''}`], [], cab, ...linhas]);
+  const ws = XLSX.utils.aoa_to_sheet([[`Cronograma Anual de Simulados — Safra ${s.nome}${sufixoArea()}`], [], cab, ...linhas]);
   ws['!cols'] = [{ wch: 5 }, { wch: 8 }, { wch: 55 }, { wch: 20 }, { wch: 18 }, { wch: 45 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 30 }, ...meses.map(() => ({ wch: 5 }))];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Cronograma');
-  XLSX.writeFile(wb, `Cronograma_Simulados_${s.nome.replace(/\W+/g, '-')}${area ? '_' + area.replace(/\W+/g, '_') : ''}.xlsx`);
+  XLSX.writeFile(wb, `Cronograma_Simulados_${s.nome.replace(/\W+/g, '-')}${unidadeFiltro() ? '_' + nomeUni(unidadeFiltro()) : ''}${area ? '_' + area.replace(/\W+/g, '_') : ''}.xlsx`);
 }
 
 init();
