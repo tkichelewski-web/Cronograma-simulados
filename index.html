@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cronograma de Simulados — IP VIDAS</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --verde:#07583C; --verde-2:#0A6B4A; --lima:#B3DD64; --lima-suave:#EAF5D6;
+  --fundo:#F2F5F0; --papel:#FFFFFF; --tinta:#1C2B22; --muted:#5D6F64;
+  --linha:#D5E3CC; --erro:#B42318; --aviso:#9A6B00; --aviso-bg:#FFF4DB;
+  --azul:#1D5C8C; --azul-bg:#E4EFF8; --cinza-bg:#EEF1EE;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:'Barlow',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;background:var(--fundo);color:var(--tinta);font-size:15px;line-height:1.5}
+button,select,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--lima);outline-offset:2px}
+.hidden{display:none !important}
+
+header.topo{background:var(--verde);color:#fff;border-bottom:4px solid var(--lima)}
+.topo-inner{max-width:1180px;margin:0 auto;padding:16px 24px;display:flex;gap:20px;align-items:flex-end;flex-wrap:wrap}
+.topo h1{margin:0;font-size:22px;line-height:1.2}
+.topo .sub{color:var(--lima);font-size:14px;font-weight:500}
+.topo .filtros{margin-left:auto;display:flex;gap:12px;flex-wrap:wrap}
+.topo label{display:block;font-size:12px;color:#CFE6D6;margin-bottom:2px}
+.topo select,.topo input{background:#0B6546;border:1px solid #2F7F60;color:#fff;border-radius:6px;padding:7px 10px;min-width:150px}
+.topo input::placeholder{color:#9CC5B0}
+
+main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
+
+/* Régua da safra: o elemento central da tela */
+.regua{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:4px;margin-bottom:22px;overflow-x:auto}
+.mes{background:var(--papel);border:1px solid var(--linha);border-radius:6px;padding:8px 6px 10px;cursor:pointer;text-align:center;min-width:64px;position:relative}
+.mes:hover{border-color:var(--verde)}
+.mes .nome{font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:700;letter-spacing:.02em;color:var(--verde)}
+.mes .ano{font-size:11px;color:var(--muted);line-height:1}
+.mes .conta{font-size:13px;font-weight:600;margin-top:4px}
+.mes .trilho{height:5px;border-radius:3px;background:var(--cinza-bg);margin-top:6px;overflow:hidden}
+.mes .trilho div{height:100%;background:var(--verde)}
+.mes.atual{box-shadow:inset 0 -3px 0 var(--lima)}
+.mes.sel{background:var(--verde);border-color:var(--verde);color:#fff}
+.mes.sel .nome{color:var(--lima)} .mes.sel .ano{color:#CFE6D6}
+.mes.sel .trilho{background:#2F7F60} .mes.sel .trilho div{background:var(--lima)}
+.mes .alerta{position:absolute;top:5px;right:6px;width:8px;height:8px;border-radius:50%;background:var(--erro)}
+
+.barra-acoes{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.barra-acoes h2{margin:0;font-size:20px}
+.barra-acoes .resumo{color:var(--muted);font-size:14px}
+.barra-acoes .dir{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:6px;border:1px solid transparent;cursor:pointer;font-weight:600;background:none}
+.btn-primario{background:var(--verde);color:#fff}
+.btn-primario:hover{background:var(--verde-2)}
+.btn-primario:disabled{background:#8FA99A;cursor:not-allowed}
+.btn-sec{background:#fff;color:var(--verde);border-color:var(--linha)}
+.btn-sec:hover{border-color:var(--verde)}
+.btn-link{color:var(--verde);padding:6px 8px;font-size:14px}
+.btn-link:hover{text-decoration:underline}
+.btn-link.perigo{color:var(--erro)}
+
+.lista{display:flex;flex-direction:column;gap:10px}
+.sim{background:var(--papel);border:1px solid var(--linha);border-left:5px solid var(--linha);border-radius:6px;padding:14px 16px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 16px}
+.sim.st-Planejado{border-left-color:#A9B8AE}
+.sim.st-Agendado{border-left-color:var(--azul)}
+.sim.st-Reprogramado{border-left-color:var(--aviso)}
+.sim.st-Realizado{border-left-color:var(--verde)}
+.sim.st-Cancelado{border-left-color:var(--erro)}
+.sim h3{margin:0;font-size:16px;line-height:1.35}
+.sim .meta{font-size:13px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap}
+.sim .gers{font-size:13px}
+.sim .gers b{font-weight:600;color:var(--muted)}
+.sim .acoes{grid-column:1/-1;display:flex;gap:2px;flex-wrap:wrap;border-top:1px solid var(--cinza-bg);padding-top:6px;margin-top:4px}
+.chip{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap;align-self:start}
+.chip.Planejado{background:var(--cinza-bg);color:var(--muted)}
+.chip.Agendado{background:var(--azul-bg);color:var(--azul)}
+.chip.Reprogramado{background:var(--aviso-bg);color:var(--aviso)}
+.chip.Realizado{background:var(--lima-suave);color:var(--verde)}
+.chip.Cancelado{background:#FCE8E6;color:var(--erro)}
+.nota{font-size:12px;font-weight:600;color:var(--erro)}
+.nota.ok{color:var(--aviso)}
+
+.vazio{background:var(--papel);border:1px dashed var(--linha);border-radius:6px;padding:28px;text-align:center;color:var(--muted)}
+
+.abas{display:flex;gap:4px;border-bottom:1px solid var(--linha);margin-bottom:18px}
+.aba{padding:8px 14px;border:none;background:none;cursor:pointer;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-1px}
+.aba.ativa{color:var(--verde);border-bottom-color:var(--verde)}
+
+/* Áreas × gerências */
+.mapa{background:var(--papel);border:1px solid var(--linha);border-radius:6px;overflow-x:auto}
+.mapa table{border-collapse:collapse;width:100%;font-size:14px}
+.mapa th,.mapa td{padding:8px 10px;border-bottom:1px solid var(--cinza-bg);text-align:center}
+.mapa th:first-child,.mapa td:first-child{text-align:left}
+.mapa thead th{background:var(--lima-suave);color:var(--verde);font-weight:700;position:sticky;top:0}
+.mapa tr.dir td{background:var(--fundo);font-weight:700;color:var(--muted);font-size:13px}
+
+/* Modal */
+.fundo-modal{position:fixed;inset:0;background:rgba(12,30,20,.55);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+.modal{background:#fff;border-radius:10px;max-width:640px;width:100%;padding:22px 24px}
+.modal h3{margin:0 0 4px;color:var(--verde);font-size:19px}
+.modal .desc{margin:0 0 16px;color:var(--muted);font-size:14px}
+.campo{display:flex;flex-direction:column;gap:4px;margin-bottom:14px}
+.campo label,.campo .rot{font-size:13px;font-weight:600;color:var(--muted)}
+.campo input,.campo select,.campo textarea{padding:9px 11px;border:1px solid var(--linha);border-radius:6px;background:#fff;width:100%}
+.campo textarea{min-height:70px;resize:vertical}
+.linha2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:560px){.linha2{grid-template-columns:1fr}}
+.areas{display:flex;gap:8px;flex-wrap:wrap}
+.areas label{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--linha);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:14px;font-weight:500;color:var(--tinta)}
+.areas input:checked+span{color:var(--verde);font-weight:700}
+.gerlist{border:1px solid var(--linha);border-radius:6px;max-height:240px;overflow:auto;padding:6px 10px}
+.gerlist .grp{font-size:12px;font-weight:700;color:var(--muted);margin:8px 0 2px}
+.gerlist label{display:flex;gap:8px;align-items:center;padding:3px 0;font-size:14px;cursor:pointer}
+.modal .rodape{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.erro-form{color:var(--erro);font-size:13px;margin:-4px 0 10px}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--tinta);color:#fff;padding:10px 18px;border-radius:6px;z-index:80;font-size:14px}
+.toast.erro{background:var(--erro)}
+.carregando{color:var(--muted);padding:20px 0}
+</style>
+</head>
+<body>
+
+<header class="topo">
+  <div class="topo-inner">
+    <div>
+      <h1>Cronograma de Simulados</h1>
+      <div class="sub">Planejamento, agenda e baixa por unidade</div>
+    </div>
+    <div class="filtros">
+      <div><label for="f-safra">Safra</label><select id="f-safra"></select></div>
+      <div><label for="f-unid">Unidade</label><select id="f-unid"></select></div>
+      <div><label for="f-resp">Seu nome</label><input id="f-resp" placeholder="Técnico responsável"></div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="abas" role="tablist">
+    <button class="aba ativa" data-aba="crono" role="tab">Cronograma</button>
+    <button class="aba" data-aba="mapa" role="tab">Áreas e gerências</button>
+  </div>
+
+  <section id="aba-crono">
+    <div class="regua" id="regua"></div>
+    <div class="barra-acoes">
+      <h2 id="titulo-mes"></h2>
+      <span class="resumo" id="resumo-mes"></span>
+      <div class="dir">
+        <button class="btn btn-sec" onclick="exportarAnual()">Exportar cronograma anual</button>
+        <button class="btn btn-primario" onclick="abrirCenario()">Novo cenário</button>
+      </div>
+    </div>
+    <div class="lista" id="lista"><div class="carregando">Carregando...</div></div>
+  </section>
+
+  <section id="aba-mapa" class="hidden">
+    <p style="margin:0 0 14px;color:var(--muted);max-width:720px">
+      Marque quais gerências fazem parte de cada área nesta unidade. Quando você escolher a área
+      de um cenário, essas gerências já vêm marcadas, e você pode ajustar caso a caso.
+    </p>
+    <div class="mapa" id="mapa"></div>
+    <div style="margin-top:12px;text-align:right"><button class="btn btn-primario" onclick="salvarMapa()">Salvar áreas</button></div>
+  </section>
+</main>
+
+<div id="modal-raiz"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// Conexão (mesmo projeto e mesma chave pública do Hub)
+// ─────────────────────────────────────────────────────────────
+const SB_URL = 'https://umpctnchhmyvpjwxllaj.supabase.co';
+const SB_KEY = 'sb_publishable_lxiF04jATB1HMLINX-FvOg_3JOjXxrQ';
+const sb = supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, storageKey: 'sistema-ip-auth' } });
+
+const AREAS = ['Indústria', 'Agrícola', 'Automotiva', 'Administrativo'];
+const TIPOS = ['Abandono de área', 'Incêndio', 'Incêndio/Explosão', 'Resgate', 'Vazamento / Produto químico', 'Acidente com veículo', 'Outro'];
+const MESES_SAFRA = [['04','Abr'],['05','Mai'],['06','Jun'],['07','Jul'],['08','Ago'],['09','Set'],['10','Out'],['11','Nov'],['12','Dez'],['01','Jan'],['02','Fev'],['03','Mar']];
+const NOMES_MES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+let safras = [], unidades = [], gerencias = [], mapaAreas = [], simulados = [];
+let mesSel = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const hojeISO = () => new Date().toISOString().slice(0, 10);
+const hojeMes = () => hojeISO().slice(0, 7);
+const fimDoMes = ym => { const [a, m] = ym.split('-').map(Number); return new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10); };
+const fmtData = d => d ? d.split('-').reverse().join('/') : '';
+const nomeMesLongo = ym => NOMES_MES[Number(ym.slice(5, 7)) - 1] + ' de ' + ym.slice(0, 4);
+const safraAtual = () => safras.find(s => s.id === Number($('f-safra').value));
+const unidadeAtual = () => Number($('f-unid').value);
+const lsGet = k => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+
+function mesesDaSafra(s) {
+  if (!s) return [];
+  return MESES_SAFRA.map(([n, abr]) => ({ ym: (Number(n) >= 4 ? s.ano_ini : s.ano_fim) + '-' + n, abr, ano: Number(n) >= 4 ? s.ano_ini : s.ano_fim }));
+}
+
+function toast(msg, erro) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (erro ? ' erro' : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), erro ? 6000 : 2600);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Regras de contagem (as mesmas que o Hub usa na apuração)
+// ─────────────────────────────────────────────────────────────
+function contaNoIP(s) {
+  return s.status === 'Realizado' && s.data_realizada && s.data_realizada <= fimDoMes(s.mes_planejado);
+}
+function situacao(s) {
+  if (s.status === 'Realizado' && !contaNoIP(s)) return { txt: 'Realizado depois do mês: não conta no IP deste mês', cls: '' };
+  if (['Planejado', 'Agendado', 'Reprogramado'].includes(s.status) && s.mes_planejado < hojeMes()) return { txt: 'Mês encerrado sem baixa', cls: '' };
+  if (['Agendado', 'Reprogramado'].includes(s.status) && s.data_agendada && s.data_agendada > fimDoMes(s.mes_planejado))
+    return { txt: 'Data marcada fora do mês planejado: não vai contar no IP deste mês', cls: 'ok' };
+  if (s.status === 'Planejado' && s.mes_planejado === hojeMes()) return { txt: 'Falta registrar a data', cls: 'ok' };
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Carga
+// ─────────────────────────────────────────────────────────────
+async function init() {
+  $('f-resp').value = lsGet('sim-resp') || '';
+  $('f-resp').addEventListener('change', e => lsSet('sim-resp', e.target.value.trim()));
+
+  const [rs, ru] = await Promise.all([
+    sb.from('safras').select('id,nome,ano_ini,ano_fim').eq('ativa', true).order('ano_ini', { ascending: false }),
+    sb.from('unidades').select('id,nome').eq('ativo', true).order('nome')
+  ]);
+  if (rs.error || ru.error) {
+    $('lista').innerHTML = `<div class="vazio">Não consegui ler safras e unidades no Supabase (${esc((rs.error || ru.error).message)}).<br>Confira as permissões das tabelas ou abra o sistema principal e faça login neste navegador.</div>`;
+    return;
+  }
+  safras = rs.data || []; unidades = ru.data || [];
+  $('f-safra').innerHTML = safras.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('');
+  $('f-unid').innerHTML = unidades.map(u => `<option value="${u.id}">${esc(u.nome)}</option>`).join('');
+  if (lsGet('sim-unid') && unidades.some(u => String(u.id) === lsGet('sim-unid'))) $('f-unid').value = lsGet('sim-unid');
+
+  $('f-safra').onchange = () => { mesSel = null; carregarTudo(); };
+  $('f-unid').onchange = () => { lsSet('sim-unid', $('f-unid').value); carregarTudo(); };
+  document.querySelectorAll('.aba').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.aba').forEach(x => x.classList.toggle('ativa', x === b));
+    $('aba-crono').classList.toggle('hidden', b.dataset.aba !== 'crono');
+    $('aba-mapa').classList.toggle('hidden', b.dataset.aba !== 'mapa');
+    if (b.dataset.aba === 'mapa') renderMapa();
+  });
+  carregarTudo();
+}
+
+async function carregarTudo() {
+  const s = safraAtual(), u = unidadeAtual();
+  if (!s || !u) return;
+  $('lista').innerHTML = '<div class="carregando">Carregando...</div>';
+  const [rg, rm, rsim] = await Promise.all([
+    sb.from('gerencias').select('id,nome,diretoria_id,diretorias(nome)').eq('unidade_id', u).eq('ativo', true).order('nome'),
+    sb.from('simulado_areas').select('area,gerencia_id').eq('unidade_id', u),
+    sb.from('cronograma_simulados').select('*, simulado_gerencias(gerencia_id)').eq('safra_id', s.id).eq('unidade_id', u).order('data_agendada', { nullsFirst: false }).order('id')
+  ]);
+  const err = rg.error || rm.error || rsim.error;
+  if (err) {
+    $('lista').innerHTML = `<div class="vazio">Erro ao carregar: ${esc(err.message)}<br>Se citar "cronograma_simulados" ou "simulado_areas", rode antes o SQL de criação das tabelas.</div>`;
+    return;
+  }
+  gerencias = rg.data || [];
+  mapaAreas = rm.data || [];
+  simulados = (rsim.data || []).map(x => ({ ...x, gers: (x.simulado_gerencias || []).map(g => g.gerencia_id) }));
+
+  if (!mesSel) {
+    const ms = mesesDaSafra(s).map(m => m.ym);
+    mesSel = ms.includes(hojeMes()) ? hojeMes() : ms[0];
+  }
+  renderRegua(); renderLista();
+  if (!$('aba-mapa').classList.contains('hidden')) renderMapa();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Régua de meses + lista do mês
+// ─────────────────────────────────────────────────────────────
+function renderRegua() {
+  $('regua').innerHTML = mesesDaSafra(safraAtual()).map(m => {
+    const doMes = simulados.filter(s => s.mes_planejado === m.ym);
+    const real = doMes.filter(contaNoIP).length;
+    const pct = doMes.length ? Math.round(real / doMes.length * 100) : 0;
+    const alerta = doMes.some(s => { const x = situacao(s); return x && !x.cls; });
+    return `<div class="mes ${m.ym === mesSel ? 'sel' : ''} ${m.ym === hojeMes() ? 'atual' : ''}" tabindex="0" role="button"
+               onclick="selMes('${m.ym}')" onkeydown="if(event.key==='Enter')selMes('${m.ym}')" aria-label="${nomeMesLongo(m.ym)}: ${real} de ${doMes.length} realizados">
+      ${alerta ? '<span class="alerta" title="Tem simulado sem baixa ou fora do mês"></span>' : ''}
+      <div class="nome">${m.abr}</div><div class="ano">${m.ano}</div>
+      <div class="conta">${real}/${doMes.length}</div>
+      <div class="trilho"><div style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('');
+}
+function selMes(ym) { mesSel = ym; renderRegua(); renderLista(); }
+
+function nomesGerencias(ids) {
+  const nomes = ids.map(id => gerencias.find(g => g.id === id)?.nome).filter(Boolean);
+  return nomes.length ? nomes.join(', ') : '<span class="nota">Nenhuma gerência marcada: não conta para ninguém no IP</span>';
+}
+
+function renderLista() {
+  const doMes = simulados.filter(s => s.mes_planejado === mesSel);
+  const real = doMes.filter(contaNoIP).length;
+  $('titulo-mes').textContent = nomeMesLongo(mesSel);
+  $('resumo-mes').textContent = doMes.length ? `${real} de ${doMes.length} realizado(s) dentro do mês` : '';
+  if (!doMes.length) {
+    $('lista').innerHTML = `<div class="vazio">Nenhum cenário planejado para ${nomeMesLongo(mesSel).toLowerCase()}.<br>
+      <button class="btn btn-primario" style="margin-top:12px" onclick="abrirCenario()">Novo cenário</button></div>`;
+    return;
+  }
+  const mesComecou = mesSel <= hojeMes();
+  $('lista').innerHTML = doMes.map(s => {
+    const sit = situacao(s);
+    const meta = [];
+    if (s.tipo) meta.push(esc(s.tipo));
+    if (s.areas?.length) meta.push('Área: ' + esc(s.areas.join(', ')));
+    if (s.data_agendada && s.status !== 'Realizado') meta.push('Data: ' + fmtData(s.data_agendada) + (s.hora_agendada ? ' às ' + s.hora_agendada.slice(0, 5) : ''));
+    if (s.status === 'Realizado') {
+      meta.push('Realizado em ' + fmtData(s.data_realizada));
+      if (s.participantes) meta.push(s.participantes + ' participantes');
+      if (s.tempo_resposta_min) meta.push('Resposta: ' + s.tempo_resposta_min + ' min');
+    }
+    if (s.motivo && ['Reprogramado', 'Cancelado'].includes(s.status)) meta.push('Motivo: ' + esc(s.motivo));
+    if (s.responsavel) meta.push('Por ' + esc(s.responsavel));
+
+    const acoes = [];
+    if (!['Realizado', 'Cancelado'].includes(s.status)) {
+      acoes.push(`<button class="btn btn-link" onclick="abrirData(${s.id})">${s.data_agendada ? 'Mudar data' : 'Registrar data'}</button>`);
+      acoes.push(`<button class="btn btn-link" onclick="abrirBaixa(${s.id})"><b>Dar baixa</b></button>`);
+    }
+    if (s.status === 'Realizado') acoes.push(`<button class="btn btn-link" onclick="abrirBaixa(${s.id})">Corrigir baixa</button>`);
+    if (s.status !== 'Cancelado') acoes.push(`<button class="btn btn-link" onclick="abrirCenario(${s.id})">Editar cenário</button>`);
+    if (s.evidencia_url) acoes.push(`<a class="btn btn-link" href="${esc(s.evidencia_url)}" target="_blank" rel="noopener">Ver evidência</a>`);
+    if (!['Realizado', 'Cancelado'].includes(s.status)) acoes.push(`<button class="btn btn-link perigo" onclick="abrirCancelar(${s.id})">Cancelar</button>`);
+    if (s.status === 'Planejado' && !mesComecou) acoes.push(`<button class="btn btn-link perigo" onclick="excluir(${s.id})">Excluir</button>`);
+
+    return `<article class="sim st-${s.status}">
+      <h3>${esc(s.cenario)}</h3>
+      <span class="chip ${s.status}">${s.status}</span>
+      <div class="meta">${meta.map(m => `<span>${m}</span>`).join('')}</div><div></div>
+      <div class="gers"><b>Gerências:</b> ${nomesGerencias(s.gers)}</div><div></div>
+      ${sit ? `<div class="nota ${sit.cls}">${sit.txt}</div><div></div>` : ''}
+      <div class="acoes">${acoes.join('')}</div>
+    </article>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────────────────────
+// Modais
+// ─────────────────────────────────────────────────────────────
+function abrirModal(html) {
+  $('modal-raiz').innerHTML = `<div class="fundo-modal" onclick="if(event.target===this)fecharModal()"><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`;
+  const primeiro = $('modal-raiz').querySelector('input,select,textarea');
+  if (primeiro) primeiro.focus();
+}
+function fecharModal() { $('modal-raiz').innerHTML = ''; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharModal(); });
+const resp = () => ($('f-resp').value || '').trim();
+function exigirResp() {
+  if (resp()) return true;
+  toast('Preencha "Seu nome" no topo antes de salvar.', true);
+  $('f-resp').focus();
+  return false;
+}
+
+function gerDaArea(areas) {
+  return new Set(mapaAreas.filter(m => areas.includes(m.area)).map(m => m.gerencia_id));
+}
+function htmlGerList(marcadas) {
+  const porDir = {};
+  gerencias.forEach(g => { const d = g.diretorias?.nome || 'Sem diretoria'; (porDir[d] = porDir[d] || []).push(g); });
+  return Object.keys(porDir).sort().map(d => `<div class="grp">${esc(d)}</div>` + porDir[d].map(g =>
+    `<label><input type="checkbox" class="chk-ger" value="${g.id}" ${marcadas.has(g.id) ? 'checked' : ''}> ${esc(g.nome)}</label>`).join('')).join('');
+}
+
+// Novo / editar cenário
+function abrirCenario(id) {
+  const s = id ? simulados.find(x => x.id === id) : null;
+  const meses = mesesDaSafra(safraAtual());
+  const mesAtualSim = s ? s.mes_planejado : mesSel;
+  const travaMes = s && s.mes_planejado <= hojeMes();
+  const areas = s ? (s.areas || []) : [];
+  const marcadas = new Set(s ? s.gers : []);
+  abrirModal(`
+    <h3>${s ? 'Editar cenário' : 'Novo cenário'}</h3>
+    <p class="desc">O mês planejado é o mês em que o simulado conta no IP. A data você registra depois, quando a área definir.</p>
+    <div class="campo"><label for="m-cen">Cenário</label>
+      <input id="m-cen" value="${esc(s?.cenario || '')}" placeholder="Ex.: Incêndio no depósito de bagaço"></div>
+    <div class="linha2">
+      <div class="campo"><label for="m-tipo">Tipo</label>
+        <select id="m-tipo"><option value="">Selecione</option>${TIPOS.map(t => `<option ${s?.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div class="campo"><label for="m-mes">Mês planejado</label>
+        <select id="m-mes" ${travaMes ? 'disabled' : ''}>${meses.map(m => `<option value="${m.ym}" ${m.ym === mesAtualSim ? 'selected' : ''} ${!s && m.ym < hojeMes() ? 'disabled' : ''}>${nomeMesLongo(m.ym)}</option>`).join('')}</select>
+        ${travaMes ? '<span style="font-size:12px;color:var(--muted)">O mês já começou, então não pode mais ser trocado.</span>' : ''}</div>
+    </div>
+    <div class="campo"><span class="rot">Área do cenário</span>
+      <div class="areas">${AREAS.map(a => `<label><input type="checkbox" class="chk-area" value="${a}" ${areas.includes(a) ? 'checked' : ''}><span>${a}</span></label>`).join('')}
+        <label><input type="checkbox" id="chk-todas"><span>Unidade inteira</span></label></div></div>
+    <div class="campo"><span class="rot">Gerências contempladas (é isso que conta no IP)</span>
+      <div class="gerlist" id="m-gers">${htmlGerList(marcadas)}</div></div>
+    <div id="m-erro" class="erro-form"></div>
+    <div class="rodape"><button class="btn btn-sec" onclick="fecharModal()">Voltar</button>
+      <button class="btn btn-primario" id="m-salvar">${s ? 'Salvar alterações' : 'Adicionar cenário'}</button></div>`);
+
+  const sync = () => {
+    const sel = [...document.querySelectorAll('.chk-area:checked')].map(c => c.value);
+    const alvo = gerDaArea(sel);
+    document.querySelectorAll('.chk-ger').forEach(c => { if (alvo.has(Number(c.value))) c.checked = true; });
+  };
+  document.querySelectorAll('.chk-area').forEach(c => c.onchange = () => {
+    if (!c.checked) { // desmarcou a área: tira as gerências só dela
+      const restantes = [...document.querySelectorAll('.chk-area:checked')].map(x => x.value);
+      const ficam = gerDaArea(restantes), sair = gerDaArea([c.value]);
+      document.querySelectorAll('.chk-ger').forEach(x => { const gid = Number(x.value); if (sair.has(gid) && !ficam.has(gid)) x.checked = false; });
+    }
+    sync();
+  });
+  $('chk-todas').onchange = e => document.querySelectorAll('.chk-ger').forEach(c => c.checked = e.target.checked);
+  $('m-salvar').onclick = () => salvarCenario(s);
+}
+
+async function salvarCenario(s) {
+  if (!exigirResp()) return;
+  const cenario = $('m-cen').value.trim();
+  const gers = [...document.querySelectorAll('.chk-ger:checked')].map(c => Number(c.value));
+  const areas = [...document.querySelectorAll('.chk-area:checked')].map(c => c.value);
+  if ($('chk-todas').checked && !areas.length) areas.push('Unidade inteira');
+  if (!cenario) { $('m-erro').textContent = 'Escreva o cenário.'; return; }
+  if (!gers.length) { $('m-erro').textContent = 'Marque pelo menos uma gerência. Sem gerência o simulado não conta no IP.'; return; }
+  const btn = $('m-salvar'); btn.disabled = true; btn.textContent = 'Salvando...';
+
+  const dados = { cenario, tipo: $('m-tipo').value || null, areas, mes_planejado: $('m-mes').value, responsavel: resp(), atualizado_em: new Date().toISOString() };
+  let simId = s?.id;
+  if (s) {
+    const { error } = await sb.from('cronograma_simulados').update(dados).eq('id', s.id);
+    if (error) return falhou(btn, error);
+    const { error: eDel } = await sb.from('simulado_gerencias').delete().eq('simulado_id', s.id);
+    if (eDel) return falhou(btn, eDel);
+  } else {
+    const { data, error } = await sb.from('cronograma_simulados').insert({ ...dados, safra_id: safraAtual().id, unidade_id: unidadeAtual(), status: 'Planejado' }).select('id');
+    if (error) return falhou(btn, error);
+    simId = data[0].id;
+  }
+  const { error: eG } = await sb.from('simulado_gerencias').insert(gers.map(g => ({ simulado_id: simId, gerencia_id: g })));
+  if (eG) return falhou(btn, eG);
+  fecharModal(); toast(s ? 'Cenário atualizado' : 'Cenário adicionado');
+  mesSel = dados.mes_planejado; carregarTudo();
+}
+
+function falhou(btn, error) {
+  btn.disabled = false; btn.textContent = 'Tentar de novo';
+  $('m-erro').textContent = 'Não salvou: ' + error.message;
+}
+
+// Registrar / mudar data
+function abrirData(id) {
+  const s = simulados.find(x => x.id === id);
+  const mudando = !!s.data_agendada;
+  abrirModal(`
+    <h3>${mudando ? 'Mudar data' : 'Registrar data'}</h3>
+    <p class="desc">${esc(s.cenario)}<br>Mês planejado: ${nomeMesLongo(s.mes_planejado)}. Só conta no IP se for realizado até ${fmtData(fimDoMes(s.mes_planejado))}.</p>
+    <div class="linha2">
+      <div class="campo"><label for="m-data">Data definida pela área</label><input type="date" id="m-data" value="${s.data_agendada || ''}"></div>
+      <div class="campo"><label for="m-hora">Horário (opcional)</label><input type="time" id="m-hora" value="${s.hora_agendada ? s.hora_agendada.slice(0, 5) : ''}"></div>
+    </div>
+    ${mudando ? `<div class="campo"><label for="m-motivo">Motivo da mudança</label><textarea id="m-motivo" placeholder="Ex.: parada da moenda antecipada"></textarea></div>` : ''}
+    <div id="m-aviso" class="nota ok" style="margin-bottom:10px"></div>
+    <div id="m-erro" class="erro-form"></div>
+    <div class="rodape"><button class="btn btn-sec" onclick="fecharModal()">Voltar</button>
+      <button class="btn btn-primario" id="m-salvar">Salvar data</button></div>`);
+  const aviso = () => { const d = $('m-data').value; $('m-aviso').textContent = d && d > fimDoMes(s.mes_planejado) ? 'Essa data cai depois do mês planejado: o simulado não vai contar no IP de ' + nomeMesLongo(s.mes_planejado) + '.' : ''; };
+  $('m-data').oninput = aviso; aviso();
+  $('m-salvar').onclick = async () => {
+    if (!exigirResp()) return;
+    const d = $('m-data').value;
+    if (!d) { $('m-erro').textContent = 'Informe a data.'; return; }
+    const motivo = mudando ? $('m-motivo').value.trim() : null;
+    if (mudando && d !== s.data_agendada && !motivo) { $('m-erro').textContent = 'Explique o motivo da mudança.'; return; }
+    const btn = $('m-salvar'); btn.disabled = true;
+    const status = mudando && d !== s.data_agendada ? 'Reprogramado' : (s.status === 'Planejado' ? 'Agendado' : s.status);
+    const { error } = await sb.from('cronograma_simulados').update({
+      data_agendada: d, hora_agendada: $('m-hora').value || null, status,
+      motivo: motivo || s.motivo, responsavel: resp(), atualizado_em: new Date().toISOString()
+    }).eq('id', s.id);
+    if (error) return falhou(btn, error);
+    fecharModal(); toast('Data salva'); carregarTudo();
+  };
+}
+
+// Dar baixa
+function abrirBaixa(id) {
+  const s = simulados.find(x => x.id === id);
+  abrirModal(`
+    <h3>Dar baixa no simulado</h3>
+    <p class="desc">${esc(s.cenario)}<br>Conta no IP de ${nomeMesLongo(s.mes_planejado)} se a data de realização for até ${fmtData(fimDoMes(s.mes_planejado))}.</p>
+    <div class="linha2">
+      <div class="campo"><label for="m-real">Data em que foi realizado</label><input type="date" id="m-real" max="${hojeISO()}" value="${s.data_realizada || s.data_agendada || ''}"></div>
+      <div class="campo"><label for="m-part">Nº de participantes</label><input type="number" min="0" id="m-part" value="${s.participantes ?? ''}"></div>
+    </div>
+    <div class="linha2">
+      <div class="campo"><label for="m-tempo">Tempo de resposta (min)</label><input type="number" min="0" step="0.5" id="m-tempo" value="${s.tempo_resposta_min ?? ''}"></div>
+      <div class="campo"><label for="m-evid">Link da evidência (ata, fotos)</label><input type="url" id="m-evid" value="${esc(s.evidencia_url || '')}" placeholder="https://..."></div>
+    </div>
+    <div class="campo"><label for="m-obs">Observações</label><textarea id="m-obs">${esc(s.observacoes || '')}</textarea></div>
+    <div id="m-aviso" class="nota ok" style="margin-bottom:10px"></div>
+    <div id="m-erro" class="erro-form"></div>
+    <div class="rodape">
+      ${s.status === 'Realizado' ? '<button class="btn btn-link perigo" id="m-desfazer" style="margin-right:auto">Desfazer baixa</button>' : ''}
+      <button class="btn btn-sec" onclick="fecharModal()">Voltar</button>
+      <button class="btn btn-primario" id="m-salvar">Confirmar baixa</button></div>`);
+  const aviso = () => { const d = $('m-real').value; $('m-aviso').textContent = d && d > fimDoMes(s.mes_planejado) ? 'Realizado depois do mês planejado: fica registrado, mas não conta no IP de ' + nomeMesLongo(s.mes_planejado) + '.' : ''; };
+  $('m-real').oninput = aviso; aviso();
+  $('m-salvar').onclick = async () => {
+    if (!exigirResp()) return;
+    const d = $('m-real').value;
+    if (!d) { $('m-erro').textContent = 'Informe a data em que o simulado foi realizado.'; return; }
+    if (d > hojeISO()) { $('m-erro').textContent = 'A data de realização não pode ser futura.'; return; }
+    const btn = $('m-salvar'); btn.disabled = true;
+    const { error } = await sb.from('cronograma_simulados').update({
+      status: 'Realizado', data_realizada: d,
+      participantes: $('m-part').value === '' ? null : Number($('m-part').value),
+      tempo_resposta_min: $('m-tempo').value === '' ? null : Number($('m-tempo').value),
+      evidencia_url: $('m-evid').value.trim() || null, observacoes: $('m-obs').value.trim() || null,
+      responsavel: resp(), atualizado_em: new Date().toISOString()
+    }).eq('id', s.id);
+    if (error) return falhou(btn, error);
+    fecharModal(); toast('Baixa registrada'); carregarTudo();
+  };
+  if ($('m-desfazer')) $('m-desfazer').onclick = async () => {
+    if (!exigirResp() || !confirm('Desfazer a baixa deste simulado?')) return;
+    const { error } = await sb.from('cronograma_simulados').update({
+      status: s.data_agendada ? 'Agendado' : 'Planejado', data_realizada: null, responsavel: resp(), atualizado_em: new Date().toISOString()
+    }).eq('id', s.id);
+    if (error) { $('m-erro').textContent = error.message; return; }
+    fecharModal(); toast('Baixa desfeita'); carregarTudo();
+  };
+}
+
+// Cancelar
+function abrirCancelar(id) {
+  const s = simulados.find(x => x.id === id);
+  abrirModal(`
+    <h3>Cancelar simulado</h3>
+    <p class="desc">${esc(s.cenario)}<br>Um simulado cancelado continua no previsto de ${nomeMesLongo(s.mes_planejado)} e conta como não realizado no IP.</p>
+    <div class="campo"><label for="m-motivo">Motivo do cancelamento</label><textarea id="m-motivo"></textarea></div>
+    <div id="m-erro" class="erro-form"></div>
+    <div class="rodape"><button class="btn btn-sec" onclick="fecharModal()">Voltar</button>
+      <button class="btn btn-primario" style="background:var(--erro)" id="m-salvar">Cancelar simulado</button></div>`);
+  $('m-salvar').onclick = async () => {
+    if (!exigirResp()) return;
+    const motivo = $('m-motivo').value.trim();
+    if (!motivo) { $('m-erro').textContent = 'Informe o motivo.'; return; }
+    const btn = $('m-salvar'); btn.disabled = true;
+    const { error } = await sb.from('cronograma_simulados').update({ status: 'Cancelado', motivo, responsavel: resp(), atualizado_em: new Date().toISOString() }).eq('id', s.id);
+    if (error) return falhou(btn, error);
+    fecharModal(); toast('Simulado cancelado'); carregarTudo();
+  };
+}
+
+async function excluir(id) {
+  const s = simulados.find(x => x.id === id);
+  if (!confirm(`Excluir o cenário "${s.cenario}"?\n\nSó é possível antes do mês começar.`)) return;
+  const { error } = await sb.from('cronograma_simulados').delete().eq('id', id);
+  if (error) { toast('Não excluiu: ' + error.message, true); return; }
+  toast('Cenário excluído'); carregarTudo();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Áreas × gerências
+// ─────────────────────────────────────────────────────────────
+function renderMapa() {
+  if (!gerencias.length) { $('mapa').innerHTML = '<div class="vazio">Nenhuma gerência ativa nesta unidade.</div>'; return; }
+  const tem = (a, g) => mapaAreas.some(m => m.area === a && m.gerencia_id === g);
+  const porDir = {};
+  gerencias.forEach(g => { const d = g.diretorias?.nome || 'Sem diretoria'; (porDir[d] = porDir[d] || []).push(g); });
+  $('mapa').innerHTML = `<table><thead><tr><th>Gerência</th>${AREAS.map(a => `<th>${a}</th>`).join('')}</tr></thead><tbody>
+    ${Object.keys(porDir).sort().map(d => `<tr class="dir"><td colspan="${AREAS.length + 1}">${esc(d)}</td></tr>` +
+      porDir[d].map(g => `<tr><td>${esc(g.nome)}</td>${AREAS.map(a => `<td><input type="checkbox" class="chk-mapa" data-area="${a}" data-ger="${g.id}" ${tem(a, g.id) ? 'checked' : ''} aria-label="${esc(g.nome)} em ${a}"></td>`).join('')}</tr>`).join('')).join('')}
+  </tbody></table>`;
+}
+
+async function salvarMapa() {
+  const u = unidadeAtual();
+  const linhas = [...document.querySelectorAll('.chk-mapa:checked')].map(c => ({ unidade_id: u, area: c.dataset.area, gerencia_id: Number(c.dataset.ger) }));
+  const { error: e1 } = await sb.from('simulado_areas').delete().eq('unidade_id', u);
+  if (e1) { toast('Não salvou: ' + e1.message, true); return; }
+  if (linhas.length) {
+    const { error: e2 } = await sb.from('simulado_areas').insert(linhas);
+    if (e2) { toast('Não salvou: ' + e2.message, true); return; }
+  }
+  mapaAreas = linhas.map(l => ({ area: l.area, gerencia_id: l.gerencia_id }));
+  toast('Áreas salvas');
+}
+
+// ─────────────────────────────────────────────────────────────
+// Exportação no formato do cronograma anual (P = planejado, R = realizado)
+// ─────────────────────────────────────────────────────────────
+function exportarAnual() {
+  const s = safraAtual(), un = unidades.find(u => u.id === unidadeAtual());
+  const meses = mesesDaSafra(s);
+  const cab = ['No.', 'Cenário', 'Tipo', 'Área', 'Gerências', 'Status', 'Data agendada', 'Data realizada', ...meses.map(m => m.abr)];
+  const ordem = [...simulados].sort((a, b) => a.mes_planejado.localeCompare(b.mes_planejado) || a.id - b.id);
+  const linhas = ordem.map((x, i) => [
+    i + 1, x.cenario, x.tipo || '', (x.areas || []).join(', '),
+    x.gers.map(id => gerencias.find(g => g.id === id)?.nome).filter(Boolean).join(', '),
+    x.status, fmtData(x.data_agendada), fmtData(x.data_realizada),
+    ...meses.map(m => m.ym === x.mes_planejado ? (contaNoIP(x) ? 'R' : 'P') : '')
+  ]);
+  const ws = XLSX.utils.aoa_to_sheet([[`Cronograma Anual de Simulados — Safra ${s.nome} — ${un?.nome || ''}`], [], cab, ...linhas]);
+  ws['!cols'] = [{ wch: 5 }, { wch: 55 }, { wch: 20 }, { wch: 18 }, { wch: 45 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, ...meses.map(() => ({ wch: 5 }))];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Cronograma');
+  XLSX.writeFile(wb, `Cronograma_Simulados_${(un?.nome || 'unidade').replace(/\W+/g, '_')}_${s.nome.replace(/\W+/g, '-')}.xlsx`);
+}
+
+init();
+</script>
+</body>
+</html>
