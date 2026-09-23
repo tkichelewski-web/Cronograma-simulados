@@ -98,6 +98,9 @@ main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
 .mapa th:first-child,.mapa td:first-child{text-align:left}
 .mapa thead th{background:var(--lima-suave);color:var(--verde);font-weight:700;position:sticky;top:0}
 .mapa tr.dir td{background:var(--fundo);font-weight:700;color:var(--muted);font-size:13px}
+.mapa tr.uni td{background:var(--verde);color:#fff;font-weight:700;font-size:14px}
+.mapa td.gnome{padding-left:22px}
+.mapa tr.semger td{color:#9AA79F;font-style:italic;font-weight:400}
 
 /* Modal */
 .fundo-modal{position:fixed;inset:0;background:rgba(12,30,20,.55);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
@@ -152,6 +155,8 @@ main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
       <h2 id="titulo-mes"></h2>
       <span class="resumo" id="resumo-mes"></span>
       <div class="dir">
+        <button class="btn btn-sec" onclick="$('in-plan').click()">Importar planilha</button>
+        <input type="file" id="in-plan" accept=".xlsx,.xls" hidden onchange="importarPlanilha(event)">
         <button class="btn btn-sec" onclick="exportarAnual()">Exportar cronograma anual</button>
         <button class="btn btn-primario" onclick="abrirCenario()">Novo cenário</button>
       </div>
@@ -160,10 +165,18 @@ main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
   </section>
 
   <section id="aba-mapa" class="hidden">
-    <p style="margin:0 0 14px;color:var(--muted);max-width:720px">
-      Marque quais gerências fazem parte de cada área nesta unidade. Quando você escolher a área
-      de um cenário, essas gerências já vêm marcadas, e você pode ajustar caso a caso.
+    <p style="margin:0 0 14px;color:var(--muted);max-width:760px">
+      Todas as diretorias e gerências, das duas unidades. Marque a área de cada gerência, ou marque
+      na linha da diretoria para aplicar a todas as gerências dela. Quando um cenário for da área
+      Agrícola, por exemplo, as gerências marcadas como Agrícola entram no previsto do IP.
     </p>
+    <div class="barra-acoes" style="margin-bottom:10px">
+      <label style="font-size:14px;color:var(--muted)">Mostrar
+        <select id="mapa-filtro" onchange="renderMapa()" style="margin-left:6px;padding:6px 8px;border:1px solid var(--linha);border-radius:6px">
+          <option value="todas">Todas as unidades</option><option value="atual">Só a unidade selecionada</option>
+        </select></label>
+      <span class="resumo" id="mapa-resumo"></span>
+    </div>
     <div class="mapa" id="mapa"></div>
     <div style="margin-top:12px;text-align:right"><button class="btn btn-primario" onclick="salvarMapa()">Salvar áreas</button></div>
   </section>
@@ -180,11 +193,12 @@ const SB_KEY = 'sb_publishable_lxiF04jATB1HMLINX-FvOg_3JOjXxrQ';
 const sb = supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, storageKey: 'sistema-ip-auth' } });
 
 const AREAS = ['Indústria', 'Agrícola', 'Automotiva', 'Administrativo'];
-const TIPOS = ['Abandono de área', 'Incêndio', 'Incêndio/Explosão', 'Resgate', 'Vazamento / Produto químico', 'Acidente com veículo', 'Outro'];
+const TIPOS = ['Abandono de área', 'Incêndio', 'Incêndio/Explosão', 'Resgate', 'Vazamento / Produto químico', 'Acidente com veículo', 'Acidente com máquina / equipamento', 'Acidente elétrico', 'Comunicação', 'Gerenciamento de crise', 'Outro'];
 const MESES_SAFRA = [['04','Abr'],['05','Mai'],['06','Jun'],['07','Jul'],['08','Ago'],['09','Set'],['10','Out'],['11','Nov'],['12','Dez'],['01','Jan'],['02','Fev'],['03','Mar']];
 const NOMES_MES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
 let safras = [], unidades = [], gerencias = [], mapaAreas = [], simulados = [];
+let todasGerencias = [], todasDiretorias = [], mapaGlobal = [];  // aba Áreas e gerências e importação
 let mesSel = null;
 
 const $ = id => document.getElementById(id);
@@ -579,28 +593,237 @@ async function excluir(id) {
 // ─────────────────────────────────────────────────────────────
 // Áreas × gerências
 // ─────────────────────────────────────────────────────────────
-function renderMapa() {
-  if (!gerencias.length) { $('mapa').innerHTML = '<div class="vazio">Nenhuma gerência ativa nesta unidade.</div>'; return; }
-  const tem = (a, g) => mapaAreas.some(m => m.area === a && m.gerencia_id === g);
-  const porDir = {};
-  gerencias.forEach(g => { const d = g.diretorias?.nome || 'Sem diretoria'; (porDir[d] = porDir[d] || []).push(g); });
-  $('mapa').innerHTML = `<table><thead><tr><th>Gerência</th>${AREAS.map(a => `<th>${a}</th>`).join('')}</tr></thead><tbody>
-    ${Object.keys(porDir).sort().map(d => `<tr class="dir"><td colspan="${AREAS.length + 1}">${esc(d)}</td></tr>` +
-      porDir[d].map(g => `<tr><td>${esc(g.nome)}</td>${AREAS.map(a => `<td><input type="checkbox" class="chk-mapa" data-area="${a}" data-ger="${g.id}" ${tem(a, g.id) ? 'checked' : ''} aria-label="${esc(g.nome)} em ${a}"></td>`).join('')}</tr>`).join('')).join('')}
-  </tbody></table>`;
+async function carregarGlobal() {
+  const [rg, rd, rm] = await Promise.all([
+    sb.from('gerencias').select('id,nome,diretoria_id,unidade_id').eq('ativo', true).order('nome'),
+    sb.from('diretorias').select('id,nome').eq('ativo', true).order('nome'),
+    sb.from('simulado_areas').select('unidade_id,area,gerencia_id')
+  ]);
+  const err = rg.error || rd.error || rm.error;
+  if (err) throw err;
+  todasGerencias = rg.data || []; todasDiretorias = rd.data || []; mapaGlobal = rm.data || [];
+}
+
+async function renderMapa() {
+  $('mapa').innerHTML = '<div class="carregando" style="padding:16px">Carregando...</div>';
+  try { await carregarGlobal(); } catch (e) { $('mapa').innerHTML = `<div class="vazio">Erro: ${esc(e.message)}</div>`; return; }
+  const soAtual = $('mapa-filtro').value === 'atual';
+  const unis = unidades.filter(u => !soAtual || u.id === unidadeAtual());
+  const tem = (a, g) => mapaGlobal.some(m => m.area === a && m.gerencia_id === g);
+  const nCol = AREAS.length + 1;
+  let html = `<table><thead><tr><th>Diretoria / gerência</th>${AREAS.map(a => `<th>${a}</th>`).join('')}</tr></thead><tbody>`;
+  unis.forEach(u => {
+    html += `<tr class="uni"><td colspan="${nCol}">${esc(u.nome)}</td></tr>`;
+    todasDiretorias.forEach(d => {
+      const gs = todasGerencias.filter(g => g.unidade_id === u.id && g.diretoria_id === d.id);
+      const chave = u.id + '-' + d.id;
+      if (!gs.length) { html += `<tr class="dir semger"><td colspan="${nCol}">${esc(d.nome)} — sem gerência ativa nesta unidade</td></tr>`; return; }
+      html += `<tr class="dir"><td>${esc(d.nome)}</td>${AREAS.map(a => {
+        const todas = gs.every(g => tem(a, g.id));
+        return `<td><input type="checkbox" class="chk-dir" data-area="${a}" data-grupo="${chave}" ${todas ? 'checked' : ''} aria-label="Toda a ${esc(d.nome)} em ${a}"></td>`;
+      }).join('')}</tr>`;
+      html += gs.map(g => `<tr><td class="gnome">${esc(g.nome)}</td>${AREAS.map(a =>
+        `<td><input type="checkbox" class="chk-mapa" data-area="${a}" data-ger="${g.id}" data-uni="${u.id}" data-grupo="${chave}" ${tem(a, g.id) ? 'checked' : ''} aria-label="${esc(g.nome)} em ${a}"></td>`).join('')}</tr>`).join('');
+    });
+    const semDir = todasGerencias.filter(g => g.unidade_id === u.id && !todasDiretorias.some(d => d.id === g.diretoria_id));
+    if (semDir.length) {
+      html += `<tr class="dir"><td colspan="${nCol}">Sem diretoria cadastrada</td></tr>` + semDir.map(g => `<tr><td class="gnome">${esc(g.nome)}</td>${AREAS.map(a =>
+        `<td><input type="checkbox" class="chk-mapa" data-area="${a}" data-ger="${g.id}" data-uni="${u.id}" data-grupo="sd-${u.id}" ${tem(a, g.id) ? 'checked' : ''}></td>`).join('')}</tr>`).join('');
+    }
+  });
+  $('mapa').innerHTML = html + '</tbody></table>';
+
+  const atualizarDir = (grupo, area) => {
+    const filhos = [...document.querySelectorAll(`.chk-mapa[data-grupo="${grupo}"][data-area="${area}"]`)];
+    const pai = document.querySelector(`.chk-dir[data-grupo="${grupo}"][data-area="${area}"]`);
+    if (pai) { const n = filhos.filter(c => c.checked).length; pai.checked = n === filhos.length; pai.indeterminate = n > 0 && n < filhos.length; }
+  };
+  document.querySelectorAll('.chk-dir').forEach(c => {
+    atualizarDir(c.dataset.grupo, c.dataset.area);
+    c.onchange = () => { document.querySelectorAll(`.chk-mapa[data-grupo="${c.dataset.grupo}"][data-area="${c.dataset.area}"]`).forEach(x => x.checked = c.checked); resumoMapa(); };
+  });
+  document.querySelectorAll('.chk-mapa').forEach(c => c.onchange = () => { atualizarDir(c.dataset.grupo, c.dataset.area); resumoMapa(); });
+  resumoMapa();
+}
+
+function resumoMapa() {
+  const todos = [...document.querySelectorAll('.chk-mapa')];
+  const ids = [...new Set(todos.map(c => c.dataset.ger))];
+  const semArea = ids.filter(id => !todos.some(c => c.dataset.ger === id && c.checked)).length;
+  $('mapa-resumo').textContent = semArea ? `${semArea} gerência(s) ainda sem área` : 'Todas as gerências têm área';
 }
 
 async function salvarMapa() {
-  const u = unidadeAtual();
-  const linhas = [...document.querySelectorAll('.chk-mapa:checked')].map(c => ({ unidade_id: u, area: c.dataset.area, gerencia_id: Number(c.dataset.ger) }));
-  const { error: e1 } = await sb.from('simulado_areas').delete().eq('unidade_id', u);
-  if (e1) { toast('Não salvou: ' + e1.message, true); return; }
-  if (linhas.length) {
-    const { error: e2 } = await sb.from('simulado_areas').insert(linhas);
-    if (e2) { toast('Não salvou: ' + e2.message, true); return; }
+  const visiveis = [...document.querySelectorAll('.chk-mapa')];
+  const gerVisiveis = [...new Set(visiveis.map(c => Number(c.dataset.ger)))];
+  const linhas = visiveis.filter(c => c.checked).map(c => ({ unidade_id: Number(c.dataset.uni), area: c.dataset.area, gerencia_id: Number(c.dataset.ger) }));
+  // apaga só o que está na tela (se o filtro for "só a unidade selecionada", a outra unidade fica intacta)
+  for (let i = 0; i < gerVisiveis.length; i += 200) {
+    const { error } = await sb.from('simulado_areas').delete().in('gerencia_id', gerVisiveis.slice(i, i + 200));
+    if (error) { toast('Não salvou: ' + error.message, true); return; }
   }
-  mapaAreas = linhas.map(l => ({ area: l.area, gerencia_id: l.gerencia_id }));
+  if (linhas.length) {
+    const { error } = await sb.from('simulado_areas').insert(linhas);
+    if (error) { toast('Não salvou: ' + error.message, true); return; }
+  }
   toast('Áreas salvas');
+  carregarTudo();
+}
+
+// ─────────────────────────────────────────────────────────────
+// Importação da planilha de simulados da safra
+// Colunas: Unidade, Diretoria, O que, ANO/SAFRA, MÊS, REALIZADO
+// A área vem do texto do cenário ("- Indústria -", "- Agrícola -" ...).
+// Gerências = as da área (pelo mapa) dentro da diretoria da linha.
+// ─────────────────────────────────────────────────────────────
+const MESES_NUM = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
+const SINONIMOS_UNIDADE = { JABOTICABAL: 'JB', 'PEREIRA BARRETO': 'PB' };
+const norm = t => String(t ?? '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+const pegar = (l, nomes) => { for (const k of Object.keys(l)) if (nomes.includes(norm(k))) return l[k]; return null; };
+
+function areasDoTexto(txt) {
+  const t = norm(txt);
+  if (/INDUSTRIA\s*\/\s*ADM/.test(t) || t.includes('ABANDONO DE AREA GERAL') || t.includes('GERENCIAMENTO DE CRISE')) return { areas: [...AREAS], unidadeInteira: true };
+  const achados = [['AGRICOLA', 'Agrícola'], ['AUTOMOTIVA', 'Automotiva'], ['INDUSTRIA', 'Indústria'], ['ADMINISTRATIVO', 'Administrativo']]
+    .map(([k, a]) => ({ a, i: t.indexOf(k) })).filter(x => x.i >= 0).sort((x, y) => x.i - y.i);
+  return { areas: achados.length ? [achados[0].a] : [], unidadeInteira: false };
+}
+function tituloDoTexto(txt) {
+  const bruto = String(txt || '');
+  let tit = (bruto.match(/["“”]([^"“”]{3,})["“”]?/) || [])[1];
+  if (!tit) { const partes = bruto.split(/\s-\s?/); tit = partes[partes.length - 1]; }
+  tit = tit.replace(/["“”]/g, '').replace(/[.\s]+$/, '').trim();
+  return (/\bPASE\b/i.test(bruto) ? 'PASE: ' : '') + tit;
+}
+function tipoDoTexto(tit) {
+  const t = norm(tit);
+  if (t.includes('ABANDONO')) return 'Abandono de área';
+  if (t.includes('GERENCIAMENTO DE CRISE')) return 'Gerenciamento de crise';
+  if (t.includes('COMUNICACAO')) return 'Comunicação';
+  if (t.includes('EXPLOS')) return 'Incêndio/Explosão';
+  if (t.includes('INCENDIO')) return 'Incêndio';
+  if (t.includes('RESGATE') || t.includes('SOTERRAMENTO') || t.includes('AERONAVE')) return 'Resgate';
+  if (t.includes('VAZAMENTO') || t.includes('DERRAMAMENTO')) return 'Vazamento / Produto químico';
+  if (t.includes('ELETRIC')) return 'Acidente elétrico';
+  if (t.includes('ATROPELAMENTO') || t.includes('TOMBAMENTO')) return 'Acidente com veículo';
+  if (t.includes('PRENSAMENTO') || t.includes('MOTOSSERA') || t.includes('CORTE') || t.includes('PNEU') || t.includes('ESMAGAMENTO')) return 'Acidente com máquina / equipamento';
+  return 'Outro';
+}
+function mesmaDiretoria(nomePlan, nomeBanco) {
+  const limpa = x => norm(x).replace(/\bDIRETORIA\b|\bDE\b|\bDA\b|\bDO\b|\bE\b/g, '').replace(/[.\s]+/g, '');
+  const a = limpa(nomePlan), b = limpa(nomeBanco);
+  return a === b || (a.length >= 3 && b.length >= 3 && (a.startsWith(b) || b.startsWith(a)));
+}
+
+async function importarPlanilha(ev) {
+  const arq = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!arq) return;
+  try {
+    const wb = XLSX.read(new Uint8Array(await arq.arrayBuffer()), { type: 'array' });
+    const linhas = [];
+    wb.SheetNames.forEach(n => XLSX.utils.sheet_to_json(wb.Sheets[n], { defval: null }).forEach(l => linhas.push(l)));
+    await carregarGlobal();
+    const { data: existentes, error: eEx } = await sb.from('cronograma_simulados').select('safra_id,unidade_id,mes_planejado,cenario');
+    if (eEx) throw eEx;
+    const jaTem = new Set((existentes || []).map(x => [x.safra_id, x.unidade_id, x.mes_planejado, norm(x.cenario)].join('|')));
+
+    const prontos = [], ignoradas = [];
+    linhas.forEach((l, i) => {
+      const uniTxt = pegar(l, ['UNIDADE']), dirTxt = pegar(l, ['DIRETORIA']), oQue = pegar(l, ['O QUE']);
+      const safTxt = String(pegar(l, ['ANO/SAFRA', 'SAFRA']) || ''), mesTxt = norm(pegar(l, ['MES'])).toLowerCase();
+      const real = Number(pegar(l, ['REALIZADO'])) > 0;
+      if (!uniTxt || !oQue || !mesTxt) return;
+      const linhaN = i + 2;
+      const alvoU = SINONIMOS_UNIDADE[norm(uniTxt)] || uniTxt;
+      const un = unidades.find(u => norm(u.nome) === norm(alvoU));
+      const m = safTxt.match(/(\d{4})\s*\/\s*(\d{2,4})/);
+      const saf = m && safras.find(s => s.ano_ini === Number(m[1]));
+      const mesNum = MESES_NUM[mesTxt];
+      if (!un) { ignoradas.push(`Linha ${linhaN}: unidade "${uniTxt}" não encontrada`); return; }
+      if (!saf) { ignoradas.push(`Linha ${linhaN}: safra "${safTxt}" não encontrada ou não está ativa`); return; }
+      if (!mesNum) { ignoradas.push(`Linha ${linhaN}: mês "${mesTxt}" não reconhecido`); return; }
+      const ym = (mesNum >= 4 ? saf.ano_ini : saf.ano_fim) + '-' + String(mesNum).padStart(2, '0');
+      let cenario = tituloDoTexto(oQue);
+      const areasTxt = areasDoTexto(oQue).areas;
+      if (norm(cenario) === 'COMUNICACAO' && areasTxt.length === 1) cenario = 'Comunicação — ' + areasTxt[0];
+      if (jaTem.has([saf.id, un.id, ym, norm(cenario)].join('|'))) { ignoradas.push(`Linha ${linhaN}: "${cenario}" já está cadastrado em ${nomeMesLongo(ym)} (${un.nome})`); return; }
+
+      const { areas, unidadeInteira } = areasDoTexto(oQue);
+      const gU = todasGerencias.filter(g => g.unidade_id === un.id);
+      const daArea = new Set(mapaGlobal.filter(x => x.unidade_id === un.id && areas.includes(x.area)).map(x => x.gerencia_id));
+      const todasDir = norm(dirTxt).startsWith('TODAS');
+      const dir = todasDiretorias.find(d => mesmaDiretoria(dirTxt, d.nome));
+      let gers, aviso = '';
+      if (unidadeInteira) gers = gU.map(g => g.id);
+      else {
+        const gArea = gU.filter(g => daArea.has(g.id));
+        const gDir = dir ? gU.filter(g => g.diretoria_id === dir.id) : [];
+        const inter = gArea.filter(g => todasDir || (dir && g.diretoria_id === dir.id));
+        if (inter.length) gers = inter.map(g => g.id);
+        else if (gArea.length) { gers = gArea.map(g => g.id); aviso = 'Nenhuma gerência da diretoria está nessa área; usei todas da área'; }
+        else if (gDir.length) { gers = gDir.map(g => g.id); aviso = 'Área sem gerências no mapa; usei a diretoria inteira'; }
+        else { gers = []; aviso = 'Sem gerências: preencha o mapa de áreas'; }
+      }
+      const fim = fimDoMes(ym), hoje = hojeISO();
+      prontos.push({
+        safra_id: saf.id, unidade_id: un.id, uniNome: un.nome, mes_planejado: ym, cenario, tipo: tipoDoTexto(cenario),
+        areas: unidadeInteira ? ['Unidade inteira'] : areas, gers, aviso,
+        status: real ? 'Realizado' : 'Planejado', data_realizada: real ? (fim < hoje ? fim : hoje) : null,
+        observacoes: 'Importado da planilha. Texto original: ' + String(oQue).trim() + (real ? ' | Data exata da realização não informada na planilha (usado o fim do mês).' : '')
+      });
+      jaTem.add([saf.id, un.id, ym, norm(cenario)].join('|'));
+    });
+    if (!prontos.length) { alert('Nada novo para importar.' + (ignoradas.length ? '\n\n' + ignoradas.slice(0, 15).join('\n') : '')); return; }
+    previaImportacao(prontos, ignoradas, arq.name);
+  } catch (e) {
+    console.error(e); toast('Erro ao ler a planilha: ' + e.message, true);
+  }
+}
+
+function previaImportacao(prontos, ignoradas, nomeArq) {
+  const nomeG = id => todasGerencias.find(g => g.id === id)?.nome || id;
+  const semMapa = !mapaGlobal.length;
+  const linhas = prontos.map(p => `<tr>
+    <td style="padding:5px 8px;border-bottom:1px solid #eee">${esc(p.uniNome)}</td>
+    <td style="padding:5px 8px;border-bottom:1px solid #eee;white-space:nowrap">${nomeMesLongo(p.mes_planejado).replace(' de ', '/')}</td>
+    <td style="padding:5px 8px;border-bottom:1px solid #eee"><b>${esc(p.cenario)}</b><br><span style="color:var(--muted)">${esc(p.areas.join(', '))}</span></td>
+    <td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:12px">${p.gers.length ? esc(p.gers.map(nomeG).join(', ')) : ''}${p.aviso ? `<div class="nota ${p.gers.length ? 'ok' : ''}">${esc(p.aviso)}</div>` : ''}</td>
+    <td style="padding:5px 8px;border-bottom:1px solid #eee"><span class="chip ${p.status}">${p.status}</span></td></tr>`).join('');
+  $('modal-raiz').innerHTML = `<div class="fundo-modal"><div class="modal" style="max-width:1000px">
+    <h3>Prévia da importação — ${esc(nomeArq)}</h3>
+    <p class="desc">${prontos.length} simulado(s) novos. Linhas com REALIZADO = 1 entram como Realizado, com a data no fim do mês (a planilha não traz o dia). Nada foi salvo ainda.</p>
+    ${semMapa ? `<div class="nota" style="margin-bottom:12px">O mapa de áreas ainda está vazio. Preencha a aba "Áreas e gerências" antes de importar, senão as gerências vão sair pela diretoria inteira.</div>` : ''}
+    ${ignoradas.length ? `<details style="margin-bottom:12px;font-size:13px"><summary>${ignoradas.length} linha(s) não serão importadas</summary><div style="color:var(--muted);margin-top:6px">${ignoradas.map(esc).join('<br>')}</div></details>` : ''}
+    <div style="max-height:52vh;overflow:auto;border:1px solid var(--linha);border-radius:6px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:var(--lima-suave);position:sticky;top:0">
+        <th style="padding:6px 8px;text-align:left">Unid.</th><th style="padding:6px 8px;text-align:left">Mês</th><th style="padding:6px 8px;text-align:left">Cenário</th>
+        <th style="padding:6px 8px;text-align:left">Gerências</th><th style="padding:6px 8px;text-align:left">Status</th></tr></thead><tbody>${linhas}</tbody></table></div>
+    <div id="m-erro" class="erro-form" style="margin-top:10px"></div>
+    <div class="rodape" style="margin-top:14px"><button class="btn btn-sec" onclick="fecharModal()">Voltar</button>
+      <button class="btn btn-primario" id="m-salvar">Importar ${prontos.length} simulado(s)</button></div></div></div>`;
+  $('m-salvar').onclick = async () => {
+    if (!exigirResp()) return;
+    const btn = $('m-salvar'); btn.disabled = true;
+    let ok = 0; const erros = [];
+    for (let i = 0; i < prontos.length; i++) {
+      const p = prontos[i]; btn.textContent = `Gravando ${i + 1}/${prontos.length}...`;
+      const { data, error } = await sb.from('cronograma_simulados').insert({
+        safra_id: p.safra_id, unidade_id: p.unidade_id, mes_planejado: p.mes_planejado, cenario: p.cenario, tipo: p.tipo,
+        areas: p.areas, status: p.status, data_realizada: p.data_realizada, observacoes: p.observacoes, responsavel: resp()
+      }).select('id');
+      if (error) { erros.push(p.cenario + ': ' + error.message); continue; }
+      if (p.gers.length) {
+        const { error: eG } = await sb.from('simulado_gerencias').insert(p.gers.map(g => ({ simulado_id: data[0].id, gerencia_id: g })));
+        if (eG) { erros.push(p.cenario + ' (gerências): ' + eG.message); continue; }
+      }
+      ok++;
+    }
+    fecharModal();
+    if (erros.length) { console.error(erros); toast(`${ok} importado(s), ${erros.length} com erro (veja o console)`, true); }
+    else toast(`${ok} simulado(s) importado(s)`);
+    carregarTudo();
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
