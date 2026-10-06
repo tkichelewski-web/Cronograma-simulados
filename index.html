@@ -23,6 +23,9 @@ button,select,input,textarea{font:inherit;color:inherit}
 :focus-visible{outline:3px solid var(--lima);outline-offset:2px}
 .hidden{display:none !important}
 
+.usuario-topo{font-size:13px;color:#CFE6D6;align-self:center}
+.usuario-topo b{color:#fff}
+.usuario-topo button{background:none;border:1px solid #2F7F60;color:#fff;border-radius:6px;padding:2px 10px;margin-left:8px;cursor:pointer;font:inherit;font-size:12px}
 header.topo{background:var(--verde);color:#fff;border-bottom:4px solid var(--lima)}
 .topo-inner{max-width:1180px;margin:0 auto;padding:16px 24px;display:flex;gap:20px;align-items:flex-end;flex-wrap:wrap}
 .topo h1{margin:0;font-size:22px;line-height:1.2}
@@ -183,6 +186,7 @@ main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
       <div><label for="f-safra">Safra</label><select id="f-safra"></select></div>
       <div><label for="f-unid">Unidade</label><select id="f-unid"></select></div>
       <div><label for="f-area">Área</label><select id="f-area"></select></div>
+      <div class="usuario-topo" id="usuario-topo" hidden></div>
     </div>
   </div>
 </header>
@@ -237,6 +241,30 @@ const SB_URL = 'https://umpctnchhmyvpjwxllaj.supabase.co';
 const SB_KEY = 'sb_publishable_lxiF04jATB1HMLINX-FvOg_3JOjXxrQ';
 const sb = supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, storageKey: 'sistema-ip-auth' } });
 
+
+// ─────────────────────────────────────────────────────────────
+// Login: exigido pelo Portal Índice de Prevenção SSMA (mesma sessão do navegador)
+// ─────────────────────────────────────────────────────────────
+const PORTAL_URL = 'https://tkichelewski-web.github.io/portal-ip/';
+let usuarioAtual = null; // { nome, email }
+async function exigirLogin() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { location.replace(PORTAL_URL + '?voltar=' + encodeURIComponent(location.href.split('#')[0])); return false; }
+  const u = session.user;
+  const { data } = await sb.from('usuarios').select('nome').eq('auth_id', u.id).maybeSingle();
+  usuarioAtual = { nome: (data && data.nome) || u.email, email: (u.email || '').toLowerCase() };
+  const box = document.getElementById('usuario-topo');
+  if (box) {
+    box.innerHTML = 'Conectado como <b></b><button type="button">Sair</button>';
+    box.querySelector('b').textContent = usuarioAtual.nome;
+    box.querySelector('button').onclick = async () => { await sb.auth.signOut(); location.href = PORTAL_URL; };
+    box.hidden = false;
+  }
+  return true;
+}
+const quemAgora = () => ({ nome: usuarioAtual?.nome || null, email: usuarioAtual?.email || null });
+const agoraISO = () => new Date().toISOString();
+
 const AREAS = ['Indústria', 'Agrícola', 'Automotiva', 'Administrativo'];
 const TIPOS = ['Abandono de área', 'Incêndio', 'Incêndio/Explosão', 'Resgate', 'Vazamento / Produto químico', 'Acidente com veículo', 'Acidente com máquina / equipamento', 'Acidente elétrico', 'Comunicação', 'Gerenciamento de crise', 'Outro'];
 const MESES_SAFRA = [['04','Abr'],['05','Mai'],['06','Jun'],['07','Jul'],['08','Ago'],['09','Set'],['10','Out'],['11','Nov'],['12','Dez'],['01','Jan'],['02','Fev'],['03','Mar']];
@@ -290,6 +318,7 @@ function situacao(s) {
 // Carga
 // ─────────────────────────────────────────────────────────────
 async function init() {
+  if (!(await exigirLogin())) return;
   visao = lsGet('sim-visao') === 'safra' ? 'safra' : 'mes';
   const [rs, ru] = await Promise.all([
     sb.from('safras').select('id,nome,ano_ini,ano_fim').eq('ativa', true).order('ano_ini', { ascending: false }),
@@ -496,7 +525,9 @@ function renderLista() {
         meta.push('Realizado em ' + fmtData(s.data_realizada));
         if (s.participantes) meta.push(s.participantes + ' participantes');
         if (s.tempo_resposta_min) meta.push('Resposta: ' + s.tempo_resposta_min + ' min');
+        if (s.baixa_por) meta.push('Baixa por ' + esc(s.baixa_por) + (s.baixa_em ? ' em ' + fmtData(s.baixa_em.slice(0, 10)) : ''));
       }
+      if (s.atualizado_por && s.atualizado_por !== s.baixa_por && s.atualizado_em) meta.push('Última alteração: ' + esc(s.atualizado_por) + ' em ' + fmtData(s.atualizado_em.slice(0, 10)));
       if (s.motivo && ['Reprogramado', 'Cancelado'].includes(s.status)) meta.push('Motivo: ' + esc(s.motivo));
       const acoes = [];
       if (!['Realizado', 'Cancelado'].includes(s.status)) {
@@ -621,7 +652,7 @@ async function salvarCenario(itens) {
   if (semGer.length) { $('m-erro').textContent = `Marque pelo menos uma gerência de ${semGer.join(' e ')}. Sem gerência o simulado não conta no IP.`; return; }
   const btn = $('m-salvar'); btn.disabled = true; btn.textContent = 'Salvando...';
 
-  const dados = { cenario, tipo: $('m-tipo').value || null, areas, mes_planejado: $('m-mes').value, atualizado_em: new Date().toISOString() };
+  const dados = { cenario, tipo: $('m-tipo').value || null, areas, mes_planejado: $('m-mes').value, atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email };
   for (const uid of uniIds) {
     const existente = itens.find(s => s.unidade_id === uid);
     let simId = existente?.id;
@@ -631,7 +662,7 @@ async function salvarCenario(itens) {
       const { error: eDel } = await sb.from('simulado_gerencias').delete().eq('simulado_id', simId);
       if (eDel) return falhou(btn, eDel);
     } else {
-      const { data, error } = await sb.from('cronograma_simulados').insert({ ...dados, safra_id: safraAtual().id, unidade_id: uid, status: 'Planejado' }).select('id');
+      const { data, error } = await sb.from('cronograma_simulados').insert({ ...dados, safra_id: safraAtual().id, unidade_id: uid, status: 'Planejado', criado_por: quemAgora().nome, criado_por_email: quemAgora().email }).select('id');
       if (error) return falhou(btn, error);
       simId = data[0].id;
     }
@@ -674,7 +705,7 @@ function abrirData(id) {
     const status = mudando && d !== s.data_agendada ? 'Reprogramado' : (s.status === 'Planejado' ? 'Agendado' : s.status);
     const { error } = await sb.from('cronograma_simulados').update({
       data_agendada: d, hora_agendada: $('m-hora').value || null, status,
-      motivo: motivo || s.motivo, atualizado_em: new Date().toISOString()
+      motivo: motivo || s.motivo, atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email
     }).eq('id', s.id);
     if (error) return falhou(btn, error);
     fecharModal(); toast('Data salva'); carregarTudo();
@@ -714,7 +745,8 @@ function abrirBaixa(id) {
       participantes: $('m-part').value === '' ? null : Number($('m-part').value),
       tempo_resposta_min: $('m-tempo').value === '' ? null : Number($('m-tempo').value),
       evidencia_url: $('m-evid').value.trim() || null, observacoes: $('m-obs').value.trim() || null,
-      atualizado_em: new Date().toISOString()
+      atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email,
+      ...(s.status === 'Realizado' && s.baixa_por ? {} : { baixa_por: quemAgora().nome, baixa_por_email: quemAgora().email, baixa_em: agoraISO() })
     }).eq('id', s.id);
     if (error) return falhou(btn, error);
     fecharModal(); toast('Baixa registrada'); carregarTudo();
@@ -722,7 +754,9 @@ function abrirBaixa(id) {
   if ($('m-desfazer')) $('m-desfazer').onclick = async () => {
     if (!confirm('Desfazer a baixa deste simulado?')) return;
     const { error } = await sb.from('cronograma_simulados').update({
-      status: s.data_agendada ? 'Agendado' : 'Planejado', data_realizada: null, atualizado_em: new Date().toISOString()
+      status: s.data_agendada ? 'Agendado' : 'Planejado', data_realizada: null,
+      baixa_por: null, baixa_por_email: null, baixa_em: null,
+      atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email
     }).eq('id', s.id);
     if (error) { $('m-erro').textContent = error.message; return; }
     fecharModal(); toast('Baixa desfeita'); carregarTudo();
@@ -743,7 +777,7 @@ function abrirCancelar(id) {
     const motivo = $('m-motivo').value.trim();
     if (!motivo) { $('m-erro').textContent = 'Informe o motivo.'; return; }
     const btn = $('m-salvar'); btn.disabled = true;
-    const { error } = await sb.from('cronograma_simulados').update({ status: 'Cancelado', motivo, atualizado_em: new Date().toISOString() }).eq('id', s.id);
+    const { error } = await sb.from('cronograma_simulados').update({ status: 'Cancelado', motivo, atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email }).eq('id', s.id);
     if (error) return falhou(btn, error);
     fecharModal(); toast('Simulado cancelado'); carregarTudo();
   };
@@ -844,16 +878,16 @@ function exportarAnual() {
   const s = safraAtual();
   const meses = mesesDaSafra(s);
   const area = $('f-area').value;
-  const cab = ['No.', 'Unidade', 'Cenário', 'Tipo', 'Área', 'Gerências', 'Status', 'Data agendada', 'Data realizada', 'Evidência', ...meses.map(m => m.abr)];
+  const cab = ['No.', 'Unidade', 'Cenário', 'Tipo', 'Área', 'Gerências', 'Status', 'Data agendada', 'Data realizada', 'Baixa por', 'Evidência', ...meses.map(m => m.abr)];
   const ordem = visiveis().sort((a, b) => a.mes_planejado.localeCompare(b.mes_planejado) || a.cenario.localeCompare(b.cenario) || nomeUni(a.unidade_id).localeCompare(nomeUni(b.unidade_id)));
   const linhas = ordem.map((x, i) => [
     i + 1, nomeUni(x.unidade_id), x.cenario, x.tipo || '', (x.areas || []).join(', '),
     x.gers.map(id => gerencias.find(g => g.id === id)?.nome).filter(Boolean).join(', '),
-    x.status, fmtData(x.data_agendada), fmtData(x.data_realizada), x.evidencia_url || '',
+    x.status, fmtData(x.data_agendada), fmtData(x.data_realizada), x.baixa_por || '', x.evidencia_url || '',
     ...meses.map(m => m.ym === x.mes_planejado ? (contaNoIP(x) ? 'R' : 'P') : '')
   ]);
   const ws = XLSX.utils.aoa_to_sheet([[`Cronograma Anual de Simulados — Safra ${s.nome}${sufixoArea()}`], [], cab, ...linhas]);
-  ws['!cols'] = [{ wch: 5 }, { wch: 8 }, { wch: 55 }, { wch: 20 }, { wch: 18 }, { wch: 45 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 30 }, ...meses.map(() => ({ wch: 5 }))];
+  ws['!cols'] = [{ wch: 5 }, { wch: 8 }, { wch: 55 }, { wch: 20 }, { wch: 18 }, { wch: 45 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 24 }, { wch: 30 }, ...meses.map(() => ({ wch: 5 }))];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Cronograma');
   XLSX.writeFile(wb, `Cronograma_Simulados_${s.nome.replace(/\W+/g, '-')}${unidadeFiltro() ? '_' + nomeUni(unidadeFiltro()) : ''}${area ? '_' + area.replace(/\W+/g, '_') : ''}.xlsx`);
