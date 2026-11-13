@@ -274,7 +274,7 @@ const TIPOS = ['Abandono de área', 'Incêndio', 'Incêndio/Explosão', 'Resgate
 const MESES_SAFRA = [['04','Abr'],['05','Mai'],['06','Jun'],['07','Jul'],['08','Ago'],['09','Set'],['10','Out'],['11','Nov'],['12','Dez'],['01','Jan'],['02','Fev'],['03','Mar']];
 const NOMES_MES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
-let safras = [], unidades = [], gerencias = [], mapaAreas = [], simulados = [];
+let safras = [], unidades = [], gerencias = [], mapaAreas = [], simulados = [], diretoriasLista = [];
 let todasGerencias = [], todasDiretorias = [], mapaGlobal = [];  // aba Áreas e gerências e importação
 let mesSel = null;
 let visao = 'mes';
@@ -361,10 +361,12 @@ async function carregarTudo() {
   $('lista').innerHTML = aguarde; $('safra').innerHTML = aguarde;
   $('titulo-mes').textContent = ''; $('resumo-mes').textContent = '';
   simulados = [];
-  const [rg, rm, rsim] = await Promise.all([
-    sb.from('gerencias').select('id,nome,diretoria_id,unidade_id,diretorias(nome)').eq('ativo', true).order('nome'),
+  const [rg, rm, rsim, rd] = await Promise.all([
+    // todas as gerências (ativas e inativas) para poder selecionar qualquer uma no cenário
+    sb.from('gerencias').select('id,nome,ativo,diretoria_id,unidade_id,diretorias(nome)').order('nome'),
     sb.from('simulado_areas').select('unidade_id,area,gerencia_id'),
-    sb.from('cronograma_simulados').select('*, simulado_gerencias(gerencia_id)').eq('safra_id', s.id).order('id')
+    sb.from('cronograma_simulados').select('*, simulado_gerencias(gerencia_id)').eq('safra_id', s.id).order('id'),
+    sb.from('diretorias').select('id,nome').order('nome')
   ]);
   if (minhaCarga !== _carga) return;
   const err = rg.error || rm.error || rsim.error;
@@ -374,6 +376,7 @@ async function carregarTudo() {
     return;
   }
   gerencias = rg.data || [];
+  diretoriasLista = rd.error ? [] : (rd.data || []);
   mapaAreas = rm.data || [];
   simulados = (rsim.data || []).map(x => ({ ...x, gers: (x.simulado_gerencias || []).map(g => g.gerencia_id) }));
 
@@ -584,18 +587,37 @@ function abrirModal(html) {
 function fecharModal() { $('modal-raiz').innerHTML = ''; }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharModal(); });
 
+// Gerências corporativas: cadastradas na unidade "JB/PB" (nome com "/"), sem unidade
+// ou numa unidade inativa. Elas aparecem dentro de cada unidade marcada (JB, PB),
+// para entrar no simulado daquela unidade.
+const uniCorp = id => !unidades.some(u => u.id === id) || nomeUni(id).includes('/');
+const gerCorp = g => !g.unidade_id || uniCorp(g.unidade_id);
+const gerDaSecao = uid => gerencias.filter(g => g.unidade_id === uid || (gerCorp(g) && (!uniCorp(uid) || !g.unidade_id)));
+const kGer = (uid, gid) => uid + ':' + gid;
+
+// Chaves "unidade:gerência" das gerências ligadas às áreas marcadas
 function gerDaArea(areas, uniIds) {
-  return new Set(mapaAreas.filter(m => areas.includes(m.area) && uniIds.includes(m.unidade_id)).map(m => m.gerencia_id));
+  const out = new Set();
+  mapaAreas.filter(m => areas.includes(m.area)).forEach(m => {
+    if (uniIds.includes(m.unidade_id)) out.add(kGer(m.unidade_id, m.gerencia_id));
+    const g = gerencias.find(x => x.id === m.gerencia_id);
+    if (g && gerCorp(g) && uniCorp(m.unidade_id)) uniIds.filter(uid => !uniCorp(uid)).forEach(uid => out.add(kGer(uid, g.id)));
+  });
+  return out;
 }
 function htmlGerList(marcadas, uniIds) {
   if (!uniIds.length) return '<div style="color:var(--muted);padding:6px 0">Marque pelo menos uma unidade.</div>';
   return unidades.filter(u => uniIds.includes(u.id)).map(u => {
     const porDir = {};
-    gerencias.filter(g => g.unidade_id === u.id).forEach(g => { const d = g.diretorias?.nome || 'Sem diretoria'; (porDir[d] = porDir[d] || []).push(g); });
-    return `<div class="grp-uni">${esc(u.nome)}</div>` + Object.keys(porDir).sort().map(d => `<div class="grp">${esc(d)}</div>` + porDir[d].map(g =>
-      `<label><input type="checkbox" class="chk-ger" value="${g.id}" ${marcadas.has(g.id) ? 'checked' : ''}> ${esc(g.nome)}</label>`).join('')).join('');
+    diretoriasLista.forEach(d => { porDir[d.nome] = []; }); // todas as diretorias aparecem, mesmo sem gerência
+    gerDaSecao(u.id).forEach(g => { const d = g.diretorias?.nome || 'Sem diretoria'; (porDir[d] = porDir[d] || []).push(g); });
+    const obs = g => [gerCorp(g) && !uniCorp(u.id) ? 'corporativo' : '', g.ativo === false ? 'inativa no cadastro' : ''].filter(Boolean).join(' · ');
+    return `<div class="grp-uni">${esc(u.nome)}</div>` + Object.keys(porDir).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(d => `<div class="grp">${esc(d)}</div>` + (porDir[d].length
+      ? porDir[d].map(g => `<label><input type="checkbox" class="chk-ger" value="${g.id}" data-uni="${u.id}" ${marcadas.has(kGer(u.id, g.id)) ? 'checked' : ''}> ${esc(g.nome)}${obs(g) ? ` <span style="color:var(--muted);font-size:12px">(${obs(g)})</span>` : ''}</label>`).join('')
+      : '<div style="color:var(--muted);font-size:12px;padding:2px 0 6px">Nenhuma gerência cadastrada nesta diretoria</div>')).join('');
   }).join('');
 }
+const chaveChk = c => kGer(Number(c.dataset.uni), Number(c.value));
 
 // Novo / editar cenário
 //  - abrirCenario(chave)       → edita o cenário em todas as unidades que o têm
@@ -616,7 +638,7 @@ function abrirCenario(chave, soId) {
   const travaMes = base && base.mes_planejado <= hojeMes();
   const areas = base ? (base.areas || []) : [];
   const uniExist = itens.map(s => s.unidade_id);
-  const marcadas = new Set(itens.flatMap(s => s.gers));
+  const marcadas = new Set(itens.flatMap(s => s.gers.map(gid => kGer(s.unidade_id, gid))));
   abrirModal(`
     <h3>${soUma ? 'Editar cenário — só ' + esc(nomeUni(base.unidade_id)) : base ? 'Editar cenário' : 'Novo cenário'}</h3>
     <p class="desc">O mês planejado é o mês em que o simulado conta no IP. A data você registra depois, quando a área definir.</p>
@@ -632,6 +654,9 @@ function abrirCenario(chave, soId) {
         <select id="m-mes" ${travaMes ? 'disabled' : ''}>${meses.map(m => `<option value="${m.ym}" ${m.ym === mesAtualSim ? 'selected' : ''} ${!base && m.ym < hojeMes() ? 'disabled' : ''}>${nomeMesLongo(m.ym)}</option>`).join('')}</select>
         ${travaMes ? '<span style="font-size:12px;color:var(--muted)">O mês já começou, então não pode mais ser trocado.</span>' : ''}</div>
     </div>
+    ${!travaMes && !soUma ? `<div class="campo" id="m-mes-sep-wrap">
+      <label style="display:flex;gap:8px;align-items:center;font-weight:500;cursor:pointer"><input type="checkbox" id="m-mes-sep"> Cada unidade em um mês diferente</label>
+      <div id="m-mes-unis" class="linha2" style="margin-top:8px"></div></div>` : ''}
     <div class="campo"><span class="rot">Unidades</span>
       <div class="areas">${unidades.filter(u => !soUma || u.id === base.unidade_id).map(u => `<label><input type="checkbox" class="chk-uni" value="${u.id}" ${(!base && (!unidadeFiltro() || unidadeFiltro() === u.id)) || uniExist.includes(u.id) ? 'checked' : ''} ${uniExist.includes(u.id) ? 'disabled' : ''}><span>${esc(u.nome)}</span></label>`).join('')}</div>
       ${base && !soUma ? '<span style="font-size:12px;color:var(--muted)">Para tirar uma unidade, use Cancelar ou Excluir na linha dela.</span>' : ''}</div>
@@ -647,18 +672,34 @@ function abrirCenario(chave, soId) {
   const unisSel = () => [...document.querySelectorAll('.chk-uni:checked')].map(c => Number(c.value));
   const areasSel = () => [...document.querySelectorAll('.chk-area:checked')].map(c => c.value);
   const redesenhar = () => {
-    const atuais = new Set([...document.querySelectorAll('.chk-ger:checked')].map(c => Number(c.value)));
+    const atuais = new Set([...document.querySelectorAll('.chk-ger:checked')].map(chaveChk));
     const marc = document.querySelector('.chk-ger') ? atuais : marcadas;
-    gerDaArea(areasSel(), unisSel()).forEach(id => marc.add(id));
-    if ($('chk-todas').checked) gerencias.filter(g => unisSel().includes(g.unidade_id)).forEach(g => marc.add(g.id));
+    gerDaArea(areasSel(), unisSel()).forEach(k => marc.add(k));
+    if ($('chk-todas').checked) unisSel().forEach(uid => gerDaSecao(uid).filter(g => g.ativo !== false).forEach(g => marc.add(kGer(uid, g.id))));
     $('m-gers').innerHTML = htmlGerList(marc, unisSel());
   };
   redesenhar();
-  document.querySelectorAll('.chk-uni').forEach(c => c.onchange = redesenhar);
+  // Mês por unidade (ex.: Administrativo em JB em março e em PB em abril)
+  const desenharMeses = () => {
+    if (!$('m-mes-sep')) return;
+    const sep = $('m-mes-sep').checked;
+    $('m-mes').disabled = sep;
+    if (!sep) { $('m-mes-unis').innerHTML = ''; return; }
+    const antes = {};
+    document.querySelectorAll('.m-mes-uni').forEach(x => { antes[x.dataset.uni] = x.value; });
+    $('m-mes-unis').innerHTML = unisSel().map(uid => {
+      const exist = itens.find(s => s.unidade_id === uid);
+      const atual = antes[uid] || exist?.mes_planejado || $('m-mes').value;
+      return `<div class="campo"><label for="m-mes-${uid}">Mês em ${esc(nomeUni(uid))}</label>
+        <select id="m-mes-${uid}" class="m-mes-uni" data-uni="${uid}">${meses.map(m => `<option value="${m.ym}" ${m.ym === atual ? 'selected' : ''} ${!exist && m.ym < hojeMes() ? 'disabled' : ''}>${nomeMesLongo(m.ym)}</option>`).join('')}</select></div>`;
+    }).join('') || '<span style="font-size:12px;color:var(--muted)">Marque as unidades acima.</span>';
+  };
+  if ($('m-mes-sep')) $('m-mes-sep').onchange = desenharMeses;
+  document.querySelectorAll('.chk-uni').forEach(c => c.onchange = () => { redesenhar(); desenharMeses(); });
   document.querySelectorAll('.chk-area').forEach(c => c.onchange = () => {
     if (!c.checked) { // desmarcou a área: tira as gerências só dela
       const ficam = gerDaArea(areasSel(), unisSel()), sair = gerDaArea([c.value], unisSel());
-      document.querySelectorAll('.chk-ger').forEach(x => { const gid = Number(x.value); if (sair.has(gid) && !ficam.has(gid)) x.checked = false; });
+      document.querySelectorAll('.chk-ger').forEach(x => { const k = chaveChk(x); if (sair.has(k) && !ficam.has(k)) x.checked = false; });
     }
     redesenhar();
   });
@@ -669,12 +710,12 @@ function abrirCenario(chave, soId) {
 async function salvarCenario(itens, chave, soUma) {
   const cenario = $('m-cen').value.trim();
   const uniIds = [...document.querySelectorAll('.chk-uni:checked')].map(c => Number(c.value));
-  const gers = [...document.querySelectorAll('.chk-ger:checked')].map(c => Number(c.value));
+  const pares = [...document.querySelectorAll('.chk-ger:checked')].map(c => ({ uid: Number(c.dataset.uni), gid: Number(c.value) }));
   const areas = [...document.querySelectorAll('.chk-area:checked')].map(c => c.value);
   if ($('chk-todas').checked) { areas.length = 0; areas.push('Unidade inteira'); }
   if (!cenario) { $('m-erro').textContent = 'Escreva o cenário.'; return; }
   if (!uniIds.length) { $('m-erro').textContent = 'Marque pelo menos uma unidade.'; return; }
-  const gersDe = uid => gers.filter(id => gerencias.find(g => g.id === id)?.unidade_id === uid);
+  const gersDe = uid => [...new Set(pares.filter(p => p.uid === uid).map(p => p.gid))];
   const semGer = uniIds.filter(uid => !gersDe(uid).length).map(nomeUni);
   if (semGer.length) {
     const comGer = itens.filter(s => gersDe(s.unidade_id).length);
@@ -689,24 +730,27 @@ async function salvarCenario(itens, chave, soUma) {
 
   const tipoSel = $('m-tipo').value;
   const dados = { cenario, ...(tipoSel === '__manter' ? {} : { tipo: tipoSel || null }), areas, mes_planejado: $('m-mes').value, atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email };
+  const mesDe = uid => ($('m-mes-sep')?.checked && $('m-mes-' + uid)) ? $('m-mes-' + uid).value : $('m-mes').value;
   for (const uid of uniIds) {
     const existente = itens.find(s => s.unidade_id === uid);
     let simId = existente?.id;
+    const dadosUni = { ...dados, mes_planejado: mesDe(uid) };
     if (existente) {
-      const { error } = await sb.from('cronograma_simulados').update(dados).eq('id', simId);
+      const { error } = await sb.from('cronograma_simulados').update(dadosUni).eq('id', simId);
       if (error) return falhou(btn, error);
       const { error: eDel } = await sb.from('simulado_gerencias').delete().eq('simulado_id', simId);
       if (eDel) return falhou(btn, eDel);
     } else {
-      const { data, error } = await sb.from('cronograma_simulados').insert({ ...dados, safra_id: safraAtual().id, unidade_id: uid, status: 'Planejado', criado_por: quemAgora().nome, criado_por_email: quemAgora().email }).select('id');
+      const { data, error } = await sb.from('cronograma_simulados').insert({ ...dadosUni, safra_id: safraAtual().id, unidade_id: uid, status: 'Planejado', criado_por: quemAgora().nome, criado_por_email: quemAgora().email }).select('id');
       if (error) return falhou(btn, error);
       simId = data[0].id;
     }
     const { error: eG } = await sb.from('simulado_gerencias').insert(gersDe(uid).map(g => ({ simulado_id: simId, gerencia_id: g })));
     if (eG) return falhou(btn, eG);
   }
-  fecharModal(); toast(itens.length ? 'Cenário atualizado' : 'Cenário adicionado');
-  mesSel = dados.mes_planejado; carregarTudo();
+  const mesesUsados = [...new Set(uniIds.map(mesDe))];
+  fecharModal(); toast((itens.length ? 'Cenário atualizado' : 'Cenário adicionado') + (mesesUsados.length > 1 ? ' — cada unidade no seu mês' : ''));
+  mesSel = mesesUsados.sort()[0]; carregarTudo();
 }
 
 function falhou(btn, error) {
