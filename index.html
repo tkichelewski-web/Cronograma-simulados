@@ -362,11 +362,10 @@ async function carregarTudo() {
   $('titulo-mes').textContent = ''; $('resumo-mes').textContent = '';
   simulados = [];
   const [rg, rm, rsim, rd] = await Promise.all([
-    // todas as gerências (ativas e inativas) para poder selecionar qualquer uma no cenário
-    sb.from('gerencias').select('id,nome,ativo,diretoria_id,unidade_id,diretorias(nome)').order('nome'),
+    sb.from('gerencias').select('id,nome,ativo,diretoria_id,unidade_id,diretorias(nome)').eq('ativo', true).order('nome'),
     sb.from('simulado_areas').select('unidade_id,area,gerencia_id'),
     sb.from('cronograma_simulados').select('*, simulado_gerencias(gerencia_id)').eq('safra_id', s.id).order('id'),
-    sb.from('diretorias').select('id,nome').order('nome')
+    sb.from('diretorias').select('id,nome').eq('ativo', true).order('nome')
   ]);
   if (minhaCarga !== _carga) return;
   const err = rg.error || rm.error || rsim.error;
@@ -376,7 +375,7 @@ async function carregarTudo() {
     return;
   }
   gerencias = rg.data || [];
-  diretoriasLista = rd.error ? [] : (rd.data || []);
+  diretoriasLista = (rd.error ? [] : (rd.data || [])).filter(d => gerencias.some(g => g.diretoria_id === d.id));
   mapaAreas = rm.data || [];
   simulados = (rsim.data || []).map(x => ({ ...x, gers: (x.simulado_gerencias || []).map(g => g.gerencia_id) }));
 
@@ -614,7 +613,7 @@ function htmlGerList(marcadas, uniIds) {
     const obs = g => [gerCorp(g) && !uniCorp(u.id) ? 'corporativo' : '', g.ativo === false ? 'inativa no cadastro' : ''].filter(Boolean).join(' · ');
     return `<div class="grp-uni">${esc(u.nome)}</div>` + Object.keys(porDir).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(d => `<div class="grp">${esc(d)}</div>` + (porDir[d].length
       ? porDir[d].map(g => `<label><input type="checkbox" class="chk-ger" value="${g.id}" data-uni="${u.id}" ${marcadas.has(kGer(u.id, g.id)) ? 'checked' : ''}> ${esc(g.nome)}${obs(g) ? ` <span style="color:var(--muted);font-size:12px">(${obs(g)})</span>` : ''}</label>`).join('')
-      : '<div style="color:var(--muted);font-size:12px;padding:2px 0 6px">Nenhuma gerência cadastrada nesta diretoria</div>')).join('');
+      : `<div style="color:var(--muted);font-size:12px;padding:2px 0 6px">Nenhuma gerência desta diretoria em ${esc(u.nome)}</div>`)).join('');
   }).join('');
 }
 const chaveChk = c => kGer(Number(c.dataset.uni), Number(c.value));
