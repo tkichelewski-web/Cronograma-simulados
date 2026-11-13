@@ -130,6 +130,10 @@ main{max-width:1180px;margin:0 auto;padding:20px 24px 60px}
 .chip.Cancelado{background:#FCE8E6;color:var(--erro)}
 .nota{font-size:12px;font-weight:600;color:var(--erro)}
 .nota.ok{color:var(--aviso)}
+.abas-uni{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px}
+.abas-uni button{padding:7px 14px;border-radius:999px;border:1px solid var(--linha);background:#fff;color:var(--verde);font-weight:600;cursor:pointer;font-size:14px}
+.abas-uni button:hover{border-color:var(--verde)}
+.abas-uni button.ativo{background:var(--verde);border-color:var(--verde);color:#fff}
 
 .vazio{background:var(--papel);border:1px dashed var(--linha);border-radius:6px;padding:28px;text-align:center;color:var(--muted)}
 
@@ -600,6 +604,11 @@ function abrirCenario(chave, soId) {
   const grupo = chave ? agrupar(simulados).find(g => g.chave === chave) : null;
   const itens = grupo ? grupo.itens.filter(s => s.status !== 'Cancelado' && (!soId || s.id === soId)) : [];
   const soUma = !!soId && itens.length === 1;
+  const ativosGrupo = grupo ? grupo.itens.filter(s => s.status !== 'Cancelado') : [];
+  const abas = ativosGrupo.length > 1 ? `<div class="abas-uni" role="tablist" aria-label="O que editar">
+      <button type="button" class="${soUma ? '' : 'ativo'}" onclick="abrirCenario('${esc(chave)}')">Todas as unidades</button>
+      ${ativosGrupo.map(s => `<button type="button" class="${soUma && s.id === soId ? 'ativo' : ''}" onclick="abrirCenario('${esc(chave)}', ${s.id})">Só ${esc(nomeUni(s.unidade_id))}</button>`).join('')}
+    </div>` : '';
   const tiposDiferentes = !soUma && new Set(itens.map(s => s.tipo || '')).size > 1;
   const base = itens[0] || null;
   const meses = mesesDaSafra(safraAtual());
@@ -611,8 +620,9 @@ function abrirCenario(chave, soId) {
   abrirModal(`
     <h3>${soUma ? 'Editar cenário — só ' + esc(nomeUni(base.unidade_id)) : base ? 'Editar cenário' : 'Novo cenário'}</h3>
     <p class="desc">O mês planejado é o mês em que o simulado conta no IP. A data você registra depois, quando a área definir.</p>
+    ${abas}
     ${soUma ? `<div class="nota ok" style="margin-bottom:10px">As alterações valem só para ${esc(nomeUni(base.unidade_id))}. A outra unidade continua como está.</div>` : ''}
-    ${!soUma && base && itens.length > 1 ? '<div class="nota ok" style="margin-bottom:10px">Você está editando todas as unidades juntas. Para mudar uma só, volte e use "Editar só ..." na linha da unidade.</div>' : ''}
+    ${!soUma && base && itens.length > 1 ? '<div class="nota ok" style="margin-bottom:10px">Você está editando todas as unidades juntas: tipo, área e mês mudam em todas. Para mudar uma só, escolha a unidade acima.</div>' : ''}
     <div class="campo"><label for="m-cen">Cenário</label>
       <input id="m-cen" value="${esc(base?.cenario || '')}" placeholder="Ex.: Incêndio no depósito de bagaço"></div>
     <div class="linha2">
@@ -653,10 +663,10 @@ function abrirCenario(chave, soId) {
     redesenhar();
   });
   $('chk-todas').onchange = e => { if (!e.target.checked) document.querySelectorAll('.chk-ger').forEach(c => c.checked = false); redesenhar(); };
-  $('m-salvar').onclick = () => salvarCenario(itens);
+  $('m-salvar').onclick = () => salvarCenario(itens, chave, soUma);
 }
 
-async function salvarCenario(itens) {
+async function salvarCenario(itens, chave, soUma) {
   const cenario = $('m-cen').value.trim();
   const uniIds = [...document.querySelectorAll('.chk-uni:checked')].map(c => Number(c.value));
   const gers = [...document.querySelectorAll('.chk-ger:checked')].map(c => Number(c.value));
@@ -666,7 +676,15 @@ async function salvarCenario(itens) {
   if (!uniIds.length) { $('m-erro').textContent = 'Marque pelo menos uma unidade.'; return; }
   const gersDe = uid => gers.filter(id => gerencias.find(g => g.id === id)?.unidade_id === uid);
   const semGer = uniIds.filter(uid => !gersDe(uid).length).map(nomeUni);
-  if (semGer.length) { $('m-erro').textContent = `Marque pelo menos uma gerência de ${semGer.join(' e ')}. Sem gerência o simulado não conta no IP.`; return; }
+  if (semGer.length) {
+    const comGer = itens.filter(s => gersDe(s.unidade_id).length);
+    const atalho = !soUma && chave && itens.length > 1 && comGer.length
+      ? ' Se a mudança é só para ' + comGer.map(s => esc(nomeUni(s.unidade_id))).join(' e ') + ', use ' +
+        comGer.map(s => `<button type="button" class="btn btn-link" style="padding:0 2px" onclick="abrirCenario('${esc(chave)}', ${s.id})">Editar só ${esc(nomeUni(s.unidade_id))}</button>`).join(' ') + '.'
+      : '';
+    $('m-erro').innerHTML = `Marque pelo menos uma gerência de ${esc(semGer.join(' e '))}. Sem gerência o simulado não conta no IP.${atalho}`;
+    return;
+  }
   const btn = $('m-salvar'); btn.disabled = true; btn.textContent = 'Salvando...';
 
   const tipoSel = $('m-tipo').value;
