@@ -399,6 +399,13 @@ function passaFiltro(s) {
 }
 const visiveis = () => simulados.filter(passaFiltro);
 
+const tiposDoGrupo = g => [...new Set(g.itens.filter(s => s.status !== 'Cancelado').map(s => s.tipo).filter(Boolean))];
+const variaPorUnidade = g => {
+  const ativos = g.itens.filter(s => s.status !== 'Cancelado');
+  const chaveAreas = s => (s.areas || []).slice().sort().join('|');
+  return ativos.length > 1 && (new Set(ativos.map(s => s.tipo || '')).size > 1 || new Set(ativos.map(chaveAreas)).size > 1);
+};
+
 function agrupar(lista) {
   const mapa = new Map();
   lista.forEach(s => {
@@ -472,7 +479,7 @@ function renderSafra() {
       return `<span class="bloco ${s.status}${fora ? ' fora' : ''}${pend ? ' pendente' : ''}" title="${esc(nomeUni(s.unidade_id) + ': ' + s.status + (sit ? ' — ' + sit.txt : ''))}">${esc(nomeUni(s.unidade_id))} ${ROTULO[s.status]}${quando ? `<small>${quando}</small>` : ''}</span>`;
     }).join('');
     corpo += `<tr class="lin" onclick="selMes('${g.mes}')">
-      <td class="cen"><b>${esc(g.cenario)}</b><span>${esc(g.tipo || '')}${g.tipo ? ' · ' : ''}${esc(g.itens.map(s => nomeUni(s.unidade_id)).join(', '))}</span></td>
+      <td class="cen"><b>${esc(g.cenario)}</b><span>${esc(tiposDoGrupo(g).join(' / '))}${tiposDoGrupo(g).length ? ' · ' : ''}${esc(g.itens.map(s => nomeUni(s.unidade_id)).join(', '))}</span></td>
       ${meses.map(m => `<td class="m">${m.ym === g.mes ? blocos : ''}</td>`).join('')}
     </tr>`;
   });
@@ -517,6 +524,8 @@ function renderLista() {
   $('lista').innerHTML = agrupar(doMes).map(g => {
     const statusGeral = g.itens.every(s => s.status === g.itens[0].status) ? g.itens[0].status : null;
     const areas = [...new Set(g.itens.flatMap(s => s.areas || []))];
+    const varia = variaPorUnidade(g);
+    const ativos = g.itens.filter(s => s.status !== 'Cancelado');
     const linhasUni = g.itens.map(s => {
       const sit = situacao(s);
       const meta = [];
@@ -530,6 +539,7 @@ function renderLista() {
       if (s.atualizado_por && s.atualizado_por !== s.baixa_por && s.atualizado_em) meta.push('Última alteração: ' + esc(s.atualizado_por) + ' em ' + fmtData(s.atualizado_em.slice(0, 10)));
       if (s.motivo && ['Reprogramado', 'Cancelado'].includes(s.status)) meta.push('Motivo: ' + esc(s.motivo));
       const acoes = [];
+      if (s.status !== 'Cancelado' && ativos.length > 1) acoes.push(`<button class="btn btn-link" onclick="abrirCenario('${esc(g.chave)}', ${s.id})">Editar só ${esc(nomeUni(s.unidade_id))}</button>`);
       if (!['Realizado', 'Cancelado'].includes(s.status)) {
         acoes.push(`<button class="btn btn-link" onclick="abrirData(${s.id})">${s.data_agendada ? 'Mudar data' : 'Registrar data'}</button>`);
         acoes.push(`<button class="btn btn-link" onclick="abrirBaixa(${s.id})"><b>Dar baixa</b></button>`);
@@ -541,6 +551,7 @@ function renderLista() {
       return `<div class="uni-linha">
         <div class="uni-cab"><span class="uni-tag">${esc(nomeUni(s.unidade_id))}</span><span class="chip ${s.status}">${s.status}</span>
           <span class="meta">${meta.map(m => `<span>${m}</span>`).join('')}</span></div>
+        ${varia ? `<div class="gers"><b>Tipo:</b> ${esc(s.tipo || 'não definido')}${(s.areas || []).length ? ` · <b>Área:</b> ${esc(s.areas.join(', '))}` : ''}</div>` : ''}
         <div class="gers"><b>Gerências:</b> ${nomesGerencias(s.gers)}</div>
         ${sit ? `<div class="nota ${sit.cls}">${sit.txt}</div>` : ''}
         <div class="acoes-uni">${acoes.join('')}</div>
@@ -550,9 +561,9 @@ function renderLista() {
     return `<article class="sim st-${statusGeral || 'misto'}">
       <div class="sim-cab">
         <h3>${esc(g.cenario)}</h3>
-        ${podeEditar ? `<button class="btn btn-link" onclick="abrirCenario('${esc(g.chave)}')">Editar cenário</button>` : ''}
+        ${podeEditar ? `<button class="btn btn-link" onclick="abrirCenario('${esc(g.chave)}')">${ativos.length > 1 ? 'Editar todas as unidades' : 'Editar cenário'}</button>` : ''}
       </div>
-      <div class="meta">${g.tipo ? `<span>${esc(g.tipo)}</span>` : ''}${areas.length ? `<span>Área: ${esc(areas.join(', '))}</span>` : ''}</div>
+      <div class="meta">${varia ? '<span>Tipo/área variam por unidade</span>' : `${g.tipo ? `<span>${esc(g.tipo)}</span>` : ''}${areas.length ? `<span>Área: ${esc(areas.join(', '))}</span>` : ''}`}</div>
       ${linhasUni}
     </article>`;
   }).join('');
@@ -582,10 +593,14 @@ function htmlGerList(marcadas, uniIds) {
   }).join('');
 }
 
-// Novo / editar cenário (editar = o cenário em todas as unidades que o têm)
-function abrirCenario(chave) {
+// Novo / editar cenário
+//  - abrirCenario(chave)       → edita o cenário em todas as unidades que o têm
+//  - abrirCenario(chave, simId) → edita só aquela unidade (as outras não mudam)
+function abrirCenario(chave, soId) {
   const grupo = chave ? agrupar(simulados).find(g => g.chave === chave) : null;
-  const itens = grupo ? grupo.itens.filter(s => s.status !== 'Cancelado') : [];
+  const itens = grupo ? grupo.itens.filter(s => s.status !== 'Cancelado' && (!soId || s.id === soId)) : [];
+  const soUma = !!soId && itens.length === 1;
+  const tiposDiferentes = !soUma && new Set(itens.map(s => s.tipo || '')).size > 1;
   const base = itens[0] || null;
   const meses = mesesDaSafra(safraAtual());
   const mesAtualSim = base ? base.mes_planejado : mesSel;
@@ -594,20 +609,22 @@ function abrirCenario(chave) {
   const uniExist = itens.map(s => s.unidade_id);
   const marcadas = new Set(itens.flatMap(s => s.gers));
   abrirModal(`
-    <h3>${base ? 'Editar cenário' : 'Novo cenário'}</h3>
+    <h3>${soUma ? 'Editar cenário — só ' + esc(nomeUni(base.unidade_id)) : base ? 'Editar cenário' : 'Novo cenário'}</h3>
     <p class="desc">O mês planejado é o mês em que o simulado conta no IP. A data você registra depois, quando a área definir.</p>
+    ${soUma ? `<div class="nota ok" style="margin-bottom:10px">As alterações valem só para ${esc(nomeUni(base.unidade_id))}. A outra unidade continua como está.</div>` : ''}
+    ${!soUma && base && itens.length > 1 ? '<div class="nota ok" style="margin-bottom:10px">Você está editando todas as unidades juntas. Para mudar uma só, volte e use "Editar só ..." na linha da unidade.</div>' : ''}
     <div class="campo"><label for="m-cen">Cenário</label>
       <input id="m-cen" value="${esc(base?.cenario || '')}" placeholder="Ex.: Incêndio no depósito de bagaço"></div>
     <div class="linha2">
       <div class="campo"><label for="m-tipo">Tipo</label>
-        <select id="m-tipo"><option value="">Selecione</option>${TIPOS.map(t => `<option ${base?.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <select id="m-tipo">${tiposDiferentes ? '<option value="__manter" selected>Manter o tipo de cada unidade</option>' : ''}<option value="">Selecione</option>${TIPOS.map(t => `<option ${!tiposDiferentes && base?.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
       <div class="campo"><label for="m-mes">Mês planejado</label>
         <select id="m-mes" ${travaMes ? 'disabled' : ''}>${meses.map(m => `<option value="${m.ym}" ${m.ym === mesAtualSim ? 'selected' : ''} ${!base && m.ym < hojeMes() ? 'disabled' : ''}>${nomeMesLongo(m.ym)}</option>`).join('')}</select>
         ${travaMes ? '<span style="font-size:12px;color:var(--muted)">O mês já começou, então não pode mais ser trocado.</span>' : ''}</div>
     </div>
     <div class="campo"><span class="rot">Unidades</span>
-      <div class="areas">${unidades.map(u => `<label><input type="checkbox" class="chk-uni" value="${u.id}" ${(!base && (!unidadeFiltro() || unidadeFiltro() === u.id)) || uniExist.includes(u.id) ? 'checked' : ''} ${uniExist.includes(u.id) ? 'disabled' : ''}><span>${esc(u.nome)}</span></label>`).join('')}</div>
-      ${base ? '<span style="font-size:12px;color:var(--muted)">Para tirar uma unidade, use Cancelar ou Excluir na linha dela.</span>' : ''}</div>
+      <div class="areas">${unidades.filter(u => !soUma || u.id === base.unidade_id).map(u => `<label><input type="checkbox" class="chk-uni" value="${u.id}" ${(!base && (!unidadeFiltro() || unidadeFiltro() === u.id)) || uniExist.includes(u.id) ? 'checked' : ''} ${uniExist.includes(u.id) ? 'disabled' : ''}><span>${esc(u.nome)}</span></label>`).join('')}</div>
+      ${base && !soUma ? '<span style="font-size:12px;color:var(--muted)">Para tirar uma unidade, use Cancelar ou Excluir na linha dela.</span>' : ''}</div>
     <div class="campo"><span class="rot">Área do cenário</span>
       <div class="areas">${AREAS.map(a => `<label><input type="checkbox" class="chk-area" value="${a}" ${areas.includes(a) ? 'checked' : ''}><span>${a}</span></label>`).join('')}
         <label><input type="checkbox" id="chk-todas" ${areas.includes('Unidade inteira') ? 'checked' : ''}><span>Unidade inteira</span></label></div></div>
@@ -652,7 +669,8 @@ async function salvarCenario(itens) {
   if (semGer.length) { $('m-erro').textContent = `Marque pelo menos uma gerência de ${semGer.join(' e ')}. Sem gerência o simulado não conta no IP.`; return; }
   const btn = $('m-salvar'); btn.disabled = true; btn.textContent = 'Salvando...';
 
-  const dados = { cenario, tipo: $('m-tipo').value || null, areas, mes_planejado: $('m-mes').value, atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email };
+  const tipoSel = $('m-tipo').value;
+  const dados = { cenario, ...(tipoSel === '__manter' ? {} : { tipo: tipoSel || null }), areas, mes_planejado: $('m-mes').value, atualizado_em: agoraISO(), atualizado_por: quemAgora().nome, atualizado_por_email: quemAgora().email };
   for (const uid of uniIds) {
     const existente = itens.find(s => s.unidade_id === uid);
     let simId = existente?.id;
